@@ -1,0 +1,24 @@
+# Desktop menu coverage
+
+Reference: Ciribob and contributors' DCS SimpleRadio Standalone at `d01f540ce5e363e9ac841775c8f7e2253138cd81`, inspected from source. This is a functional inventory, not a promise of identical layout or full stock-client parity. Windows/Linux standalone TOC remains ahead of mobile and DCS integration. No inert controls stand in for unimplemented features.
+
+Reference paths below are relative to `DCS-SR-Client/UI/ClientWindow/`. The reference's translated text keys and bindings were inspected, without copying its XAML, artwork or sound assets.
+
+| Reference screen | Controls represented | Rust boundary / work |
+|---|---|---|
+| `MainWindow.xaml`, General | Microphone/output, output boost, server address, EAM password/name, connection/voice/game status, profile/unit/position, connected clients | Device/connection/callsign/EAM implemented. Asynchronous device refresh, hostname resolution and connection health implemented. Hardware boost/listening pending; game/unit/position depend on a later DCS adapter. |
+| `Favourites/FavouriteServersView.xaml` | Add/remove/name/address/default/EAM favourites | Named servers and explicit load implemented; passwords intentionally excluded. Auto-joining a saved server is not implied by launch. |
+| `InputSettingsControl/InputSettings.xaml` | Device rescan, PTT, ten radio selections, intercom/PTT, next/previous radio, frequency steps, guard/key/key steps, channel steps, volume steps, overlay toggles, transponder | Foreground held PTT implemented; configurable F1–F12/mouse-only foreground key and saved preferences implemented. Global/HID, compound bindings and physical input validation remain pending. Radio operations have explicit GUI controls; DCS/transponder/overlay bindings follow their adapters. |
+| `ClientSettingsControl/ClientSettings.xaml`, interface/profile | Global/profile settings, create/copy/rename/delete, theme, tray/minimize, transmitter names, autoconnect prompts, updates, path/admin/input options | Named radio presets and local persistence implemented. Six-page navigation/help and radio-only native preset import/export implemented. Tray/startup/update service and upstream input-profile format remain pending. No admin requirement or updater is added by default. |
+| Same, microphone/incoming/VOX | Denoise, AGC and target/max levels, VOX mode/threshold/hold | Not implemented; DSP must have deterministic signal tests and later listening evidence. VOX is a separate transmit mode, not a cosmetic checkbox. |
+| Same, recording | Allow others to record, record/mixdown, format/quality, disallowed tone | Not implemented; current identity disallows recording. Consent, storage bounds and explicit capture UI precede any recorder. |
+| Same, integration | DCS PTT/selection, HOTAS, expansion, rotary, start/release delay, server/EAM presets, instructor mode | Standalone TOC uses immediate release and a finite hold cap. DCS integration, instructor intercom and server preset format remain pending. |
+| Same, effects/audio | RX/TX/start/end/intercom/key/MIDS/HQ/NATO sounds, per-model effects, clipping, background/HF/ambient gain, ten radio/intercom stereo channels | Local per-radio receive gain/mute/RX implemented. Stereo routing, smooth gain changes and receive-priority scoring remain pending. Effects/assets need provenance and DSP/listening checks. |
+| `ClientList/ClientListWindow.xaml` | Connected clients, coalition, radio/state metadata | Bounded, sanitized standalone client list implemented; not a new source of server-hidden information. |
+| `ServerSettingsWindow/ServerSettingsWindow.xaml` | Coalition/spectator, distance/LOS, IRL TX, interference/expansion/EAM, encryption/strictness, counts/names/presets, version, node limit | Read-only server policy/status implemented. The client cannot administer server settings; unsupported DSP/terrain flags are identified as such. |
+| `AwacsRadioOverlayWindow/*`, `RadioOverlayWindow/*` | Radio selection/tuning/guard/key/presets, retransmit/simulcast, intercom/instructor/transponder | Standalone ten-radio editor and preset loading implemented. Separate overlays, retransmit/simulcast, instructor/intercom and transponder are later work. |
+| `MainWindow.xaml`, Help | Setup, controls, troubleshooting and localization guidance | In-app standalone help/version/license and session health counters implemented. English strings stay externalized; translation catalogue and screen-reader checks remain pending. |
+
+## Validation boundary
+
+Automation uses generated audio, loopback/private stock SRS, process-local null audio, temporary profiles and private Xvfb. Native file dialogs, real device removal, actual keys/joysticks, headsets, listening, Wayland, accessibility and installer/signing acceptance must be recorded separately. A completed software task does not make those human checks pass.

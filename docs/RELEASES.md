@@ -19,3 +19,5 @@ Use semantic versions for application releases. Keep prereleases clearly labeled
 Desktop packaging must preserve user configuration and avoid overwriting an upstream SRS installation. Android distribution needs proper signing and runtime-permission behavior. iOS distribution requires a verified licensing and signing route. Signing keys, store credentials, and APNs credentials stay in appropriate private infrastructure, never in Git.
 
 An eventual updater must authenticate downloaded artifacts and handle interrupted updates/rollback. Design it as a separate reviewed feature. There is no automatic update behavior in the scaffold.
+
+Local validation builds can be prepared with `python3 scripts/build_desktop.py`; [DESKTOP_VALIDATION.md](DESKTOP_VALIDATION.md) records the manifest and human checks. This helper does not sign, install, upload or publish packages.

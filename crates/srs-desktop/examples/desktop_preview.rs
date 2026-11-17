@@ -1,7 +1,7 @@
 //! Synthetic UI inspection only: opens no audio devices or network sockets.
 #![forbid(unsafe_code)]
 use slint::{ComponentHandle, Timer, TimerMode, VecModel};
-use srs_desktop::ui::{MainWindow, RadioRow};
+use srs_desktop::ui::{MainWindow, PeerRow, PolicyRow, RadioRow};
 use std::{error::Error, io::Write, rc::Rc, time::Duration};
 fn main() -> Result<(), Box<dyn Error>> {
     let path = std::env::args()
@@ -14,7 +14,49 @@ fn main() -> Result<(), Box<dyn Error>> {
         .select()?;
     let ui = MainWindow::new()?;
     ui.set_demonstration(true);
+    if std::env::args().any(|arg| arg == "--compact") {
+        ui.window().set_size(slint::LogicalSize::new(900., 800.));
+    }
+    ui.set_page(0);
+    ui.set_app_version(env!("CARGO_PKG_VERSION").into());
+    for arg in std::env::args() {
+        if let Some(page) = arg.strip_prefix("--page=").and_then(|p| p.parse().ok()) {
+            ui.set_page(page);
+        }
+    }
     ui.set_callsign("TOC DEMO".into());
+    ui.set_server_version("2.4.1.0".into());
+    ui.set_coalition(2);
+    ui.set_client_count("3".into());
+    ui.set_node_limit("3".into());
+    ui.set_peers(
+        Rc::new(VecModel::from(vec![
+            PeerRow {
+                name: "TOC DEMO".into(),
+                coalition: 2,
+            },
+            PeerRow {
+                name: "Tower".into(),
+                coalition: 2,
+            },
+            PeerRow {
+                name: "Flight lead".into(),
+                coalition: 2,
+            },
+        ]))
+        .into(),
+    );
+    ui.set_policy(
+        Rc::new(VecModel::from(
+            (0..15)
+                .map(|index| PolicyRow {
+                    index,
+                    state: if index == 7 { 1 } else { 2 },
+                })
+                .collect::<Vec<_>>(),
+        ))
+        .into(),
+    );
     ui.set_inputs(Rc::new(VecModel::from(vec!["Preview microphone".into()])).into());
     ui.set_outputs(Rc::new(VecModel::from(vec!["Preview headphones".into()])).into());
     ui.set_radios(
@@ -53,8 +95,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     ui.set_preset_name("TOC standard".into());
     ui.set_radio_name("Command".into());
     if std::env::args().any(|arg| arg == "--profiles") {
-        ui.set_profiles_open(true);
-        ui.window().set_size(slint::LogicalSize::new(1080., 1060.));
+        ui.set_page(2);
     }
     ui.set_busy(true);
     ui.set_ready(true);

@@ -3,7 +3,7 @@ export global Strings {
     out property<string> preview: @tr("desktop.preview" => "UI PREVIEW • No audio or network");
     out property<string> title: @tr("desktop.title" => "DCS SRS Rust");
     out property<string> subtitle: @tr("desktop.subtitle" => "TOC • Desktop preview");
-    out property<string> server: @tr("desktop.server" => "Server IP:port");
+    out property<string> server: @tr("desktop.server" => "Server hostname or IP:port");
     out property<string> callsign: @tr("desktop.callsign" => "Callsign");
     out property<string> password: @tr("desktop.password" => "Coalition password");
     out property<string> microphone: @tr("desktop.microphone" => "Microphone");
@@ -27,16 +27,16 @@ export global Strings {
     out property<string> apply: @tr("desktop.apply" => "Apply");
     out property<string> disable: @tr("desktop.disable" => "Disable radio");
     out property<string> off: @tr("desktop.off" => "OFF");
-    out property<string> talk: @tr("desktop.talk" => "HOLD TO TALK • F8");
+    public pure function talk(key: int) -> string { key == 0 ? @tr("ptt.mouse-talk" => "HOLD TO TALK") : @tr("ptt.key-talk" => "HOLD TO TALK • F{0}", key) }
     out property<string> release: @tr("desktop.release" => "TRANSMITTING • Release to stop");
-    out property<string> arm: @tr("desktop.arm" => "TAP & RELEASE TO ARM • F8 or this pad");
+    public pure function arm(key: int) -> string { key == 0 ? @tr("ptt.mouse-arm" => "TAP & RELEASE THIS PAD TO ARM") : @tr("ptt.key-arm" => "TAP & RELEASE TO ARM • F{0} or this pad", key) }
     out property<string> unavailable: @tr("desktop.unavailable" => "PTT UNAVAILABLE • Connect and tune a radio");
     out property<string> ptt-help: @tr("desktop.ptt-help" => "Foreground only • 5 second hold limit • Release and press again after interruption");
     out property<string> privacy: @tr("desktop.privacy" => "Connect opens the chosen microphone and output. Passwords are not saved. Use headphones.");
     out property<string> editing: @tr("desktop.editing" => "Applying radio settings… PTT released");
     out property<string> delivery: @tr("desktop.delivery" => "TX shows local activity; SRS does not confirm remote reception.");
     out property<string> license: @tr("desktop.license" => "Independent SRS-compatible client • GPL-3.0-only • No warranty");
-    out property<string> error-address: @tr("error.address" => "Enter a server IP address and port, for example 127.0.0.1:5002.");
+    out property<string> error-address: @tr("error.address" => "Enter a hostname or IP address with a port, for example localhost:5002 or [::1]:5002.");
     out property<string> error-callsign: @tr("error.callsign" => "Enter a callsign of 1–128 bytes without control characters.");
     out property<string> error-password: @tr("error.password" => "The coalition password is too long (maximum 1024 bytes).");
     out property<string> error-device: @tr("error.device" => "Audio device unavailable or unsupported. Select a 48 kHz mono/stereo device and reconnect.");
@@ -77,8 +77,71 @@ export global Strings {
         code == 3 ? @tr("profiles.invalid" => "Invalid or newer settings file preserved. Repair or move it, then reload saved lists.") :
         code == 4 ? @tr("profiles.conflict" => "Settings changed in another app. Reload saved lists before saving again.") :
         code == 5 ? @tr("profiles.locked" => "Settings file busy. Try again after the other save finishes.") :
+        code == 6 ? @tr("transfer.conflict" => "Import has an existing preset name. Rename it in the file or explicitly remove the saved preset first. Nothing was imported.") :
+        code == 7 ? @tr("transfer.exists" => "Export destination already exists. Choose a new filename; the existing file was preserved.") :
+        code == 8 ? @tr("transfer.canceled" => "File selection canceled or unavailable. No settings changed.") :
+        code == 9 ? @tr("transfer.close" => "Close the file chooser before closing this window. Audio has been stopped.") :
+        code == 10 ? @tr("transfer.imported" => "Presets imported. Choose one and press Load to apply it.") :
+        code == 11 ? @tr("transfer.exported" => "Saved radio presets exported.") :
         @tr("profiles.help" => "Save replaces the same name. Load applies all radios and releases PTT.")
     }
+    out property<string> import-presets: @tr("transfer.import" => "Import radio presets…");
+    out property<string> export-presets: @tr("transfer.export" => "Export radio presets…");
+    out property<string> preset-file: @tr("transfer.file" => "SRS Rust radio presets (JSON)");
+    out property<string> transfer-help: @tr("transfer.help" => "Transfer saved radio presets only; server addresses, device choices and passwords are excluded. Import adds new names and rejects conflicts; Load applies a preset. Export requires a new filename. This format is specific to SRS Rust.");
+    out property<string> nav-radios: @tr("nav.radios" => "Radios");
+    out property<string> nav-connection: @tr("nav.connection" => "Connection");
+    out property<string> nav-presets: @tr("nav.presets" => "Saved setups");
+    out property<string> nav-controls: @tr("nav.controls" => "Controls");
+    out property<string> nav-server: @tr("nav.server" => "Server & clients");
+    out property<string> nav-help: @tr("nav.help" => "Help");
+    out property<string> refresh-devices: @tr("devices.refresh" => "Refresh devices");
+    out property<string> retry-choice: @tr("connection.retry" => "Retry network failures • up to 3 times");
+    out property<string> retry-help: @tr("connection.retry-help" => "Opt in before connecting. Keeps the password in memory until disconnect; never saves it. Retries after 1, 2 and 4 seconds. Restart is receive-only. Disconnect cancels recovery.");
+    public pure function retrying(attempt: int) -> string { @tr("connection.retrying" => "RECONNECTING • Retry {0}/3 • PTT unavailable", attempt) }
+    out property<string> scanning: @tr("devices.scanning" => "Finding devices…");
+    out property<string> address-help: @tr("connection.address-help" => "Include the port. Hostnames, IPv4 and bracketed IPv6 are supported. Disconnect before changing devices.");
+    out property<string> mouse-only: @tr("ptt.mouse-only" => "Mouse only");
+    out property<string> ptt-binding: @tr("ptt.binding" => "Foreground push to talk");
+    out property<string> save-controls: @tr("ptt.save" => "Save controls");
+    out property<string> controls-saved: @tr("ptt.saved" => "This binding is saved for the next launch.");
+    out property<string> controls-unsaved: @tr("ptt.unsaved" => "Binding changed for this session. Choose Save controls to keep it.");
+    public pure function active-radio(slot: int, frequency: string) -> string { @tr("ptt.active-radio" => "TX radio {0} • {1}", slot, frequency) }
+    out property<string> controls-help: @tr("ptt.help" => "Choose Mouse only or F1–F12 without modifiers. Changes apply now; Save controls keeps them for next launch. PTT works only while this window has focus. Tap and release to arm, then hold to talk. Focus loss, menu changes and edits release PTT. Release and press again after the 5 second hold limit. Global shortcuts and joystick bindings are not available yet.");
+    out property<string> unknown: @tr("server.unknown" => "Not supplied");
+    out property<string> unnamed: @tr("server.unnamed" => "Unnamed client");
+    out property<string> enabled: @tr("server.enabled" => "Enabled");
+    out property<string> disabled: @tr("server.disabled" => "Disabled");
+    out property<string> clients: @tr("server.clients" => "Connected clients");
+    out property<string> clients-help: @tr("server.clients-help" => "Up to 256 names shown. The server may hide other coalitions.");
+    out property<string> server-policy: @tr("server.policy" => "Server policy • read only");
+    out property<string> server-live: @tr("server.live" => "Information supplied by the current server. Enabled settings do not imply this client implements every feature.");
+    out property<string> server-last: @tr("server.last" => "Last session information. Connect to update it.");
+    public pure function server-summary(version: string, coalition: string, clients: string) -> string { @tr("server.summary" => "SRS {0} • Your coalition: {1} • Clients: {2}", version, coalition, clients) }
+    public pure function coalition-name(value: int) -> string { value == 1 ? @tr("coalition.red" => "Red") : value == 2 ? @tr("coalition.blue" => "Blue") : value == 0 ? @tr("coalition.spectator" => "Spectator") : root.unknown }
+    public pure function relay-limit(value: string) -> string { @tr("server.relay-limit" => "Retransmission limit: {0}", value) }
+    public pure function health(rejected: string, overflows: string, clipped: string, speakers: string) -> string { @tr("server.health" => "Rejected packets: {0} • Playback queue drops: {1} • Clipped samples: {2} • Peak simultaneous voices: {3}", rejected, overflows, clipped, speakers) }
+    public pure function policy-label(index: int) -> string {
+        index == 0 ? @tr("policy.coalition" => "Coalition audio security") :
+        index == 1 ? @tr("policy.spectators" => "Spectator audio disabled") :
+        index == 2 ? @tr("policy.los" => "Line of sight") :
+        index == 3 ? @tr("policy.distance" => "Distance limits") :
+        index == 4 ? @tr("policy.tx" => "Realistic radio transmit") :
+        index == 5 ? @tr("policy.rx" => "Receive interference") :
+        index == 6 ? @tr("policy.expansion" => "Expansion radios") :
+        index == 7 ? @tr("policy.eam" => "External AWACS mode") :
+        index == 8 ? @tr("policy.keys" => "Simulated encryption allowed") :
+        index == 9 ? @tr("policy.strict-keys" => "Strict simulated encryption") :
+        index == 10 ? @tr("policy.tuned" => "Tuned counts visible") :
+        index == 11 ? @tr("policy.names" => "Transmitter names visible") :
+        index == 12 ? @tr("policy.presets" => "Server presets") :
+        index == 13 ? @tr("policy.eam-presets" => "EAM radio presets") :
+        @tr("policy.instructor" => "Instructor mode allowed")
+    }
+    out property<string> help-connect: @tr("help.connect" => "1. In Connection, enter your server and callsign, choose your microphone and headphones, and enter the coalition password supplied by the server operator. External AWACS Mode must be enabled on the server. Connect intentionally opens audio; disconnect closes it. Passwords are never saved.");
+    out property<string> help-radio: @tr("help.radio" => "2. In Radios, select a transmit radio and apply a frequency and AM/FM mode. You can prepare radios while offline. Guard, simulated key, name, receive level and mute belong to that radio. Mute affects reception only. Saved setups stores named servers and complete ten-radio presets; loading a preset releases PTT.");
+    out property<string> help-limits: @tr("help.limits" => "This is a standalone TOC desktop preview. It does not control DCS cockpit radios. Receive audio currently plays in both headphone channels. Physical headset, accessibility and platform PTT validation remain pending. No recording, global/HID PTT or mobile app is available yet. Optional connection recovery has three retries and always restarts receive-only. TX indicates local transmission, not confirmed delivery.");
+    public pure function help-about(version: string) -> string { @tr("help.about" => "Application {0} • Independent SRS-compatible project • GPL-3.0-only. SRS protocol compatibility is separate from the application version. Source, notices and testing instructions:", version) }
     public pure function problem(code: int) -> string {
         code == 1 ? root.error-address :
         code == 2 ? root.error-callsign :
@@ -93,6 +156,8 @@ export global Strings {
         code == 11 ? root.error-identity :
         code == 12 ? root.error-frequency :
         code == 13 ? root.error-profile :
+        code == 15 ? @tr("error.network" => "Network connection stopped. Recovery is disabled or exhausted; check the server and reconnect.") :
+        code == 14 ? @tr("error.resolve" => "Could not resolve the server hostname. Check the spelling and network connection.") :
         ""
     }
     public pure function radio-label(slot: int, frequency: string, mode: string) -> string {
