@@ -15,6 +15,10 @@ srs-protocol = { path = "../srs-protocol" }
 srs-toc = { path = "../srs-toc" }
 tokio = { version = "1.54.1", features = ["rt", "macros", "sync", "time"] }
 getrandom = "0.4.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+directories = "6.0.0"
+tempfile = "3.27.0"
 
 [build-dependencies]
 slint-build = "=1.19.0"

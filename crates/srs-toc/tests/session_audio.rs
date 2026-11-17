@@ -457,3 +457,59 @@ async fn rejected_edit_does_not_clear_an_abandoned_edits_input_inhibition() {
     h.packet().await;
     h.stop().await;
 }
+
+#[tokio::test]
+async fn complete_preset_releases_held_ptt_and_publishes_one_validated_update() {
+    use srs_client::commands::RadioEdit;
+    let mut h = Harness::new(false).await;
+    h.press().await;
+    h.feed(2).await;
+    let mut preset = disabled_radios();
+    preset[1] = Radio {
+        name: "Command Net".into(),
+        ..Radio::tuned(252e6, Modulation::FM)
+    };
+    preset[2] = Radio {
+        guard_hz: 243e6,
+        encryption_key: Some(7),
+        ..Radio::tuned(253e6, Modulation::AM)
+    };
+    let snapshot = h
+        .owner
+        .as_mut()
+        .unwrap()
+        .edit_radios(RadioEdit::Replace(Box::new(preset.clone())))
+        .await
+        .unwrap();
+    assert!(snapshot == preset);
+    h.phase(Phase::Receiving).await;
+    assert!(*h.radios.borrow() == preset);
+    let update = read(&mut h.tcp).await;
+    assert_eq!(update["MsgType"], 3);
+    let wire = &update["Client"]["RadioInfo"]["radios"];
+    assert_eq!(wire[1]["freq"], 252e6);
+    assert_eq!(wire[1]["Name"], "commandnet");
+    assert_eq!(wire[2]["freq"], 253e6);
+    assert_eq!(wire[2]["encKey"], 7);
+    assert!(
+        timeout(Duration::from_millis(30), h.tcp.fill_buf())
+            .await
+            .is_err(),
+        "preset emitted more than one update"
+    );
+    assert_eq!(h.owner.as_mut().unwrap().renew(), Err(Error::InputExpired));
+    h.feed(4).await;
+    let mut bytes = [0; 8192];
+    assert!(
+        h.udp.try_recv_from(&mut bytes).is_err(),
+        "old held audio crossed preset change"
+    );
+    h.owner.as_mut().unwrap().press(2).unwrap();
+    h.phase(Phase::Transmitting).await;
+    h.feed(4).await;
+    let bytes = h.packet().await;
+    let packet = VoicePacket::decode(&bytes).unwrap();
+    assert_eq!(packet.frequencies[0].hz, 253e6);
+    assert_eq!(packet.frequencies[0].encryption, 7);
+    h.stop().await;
+}

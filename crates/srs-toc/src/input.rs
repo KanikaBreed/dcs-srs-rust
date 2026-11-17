@@ -44,10 +44,18 @@ impl Controller {
         &mut self,
         change: srs_client::commands::RadioChange,
     ) -> Result<[srs_client::Radio; srs_client::RADIO_COUNT], Error> {
+        self.edit_radios(change.into()).await
+    }
+    /// Apply a complete preset or name edit with the same release, policy and
+    /// cancellation guarantees as a single-field edit.
+    pub async fn edit_radios(
+        &mut self,
+        edit: srs_client::commands::RadioEdit,
+    ) -> Result<[srs_client::Radio; srs_client::RADIO_COUNT], Error> {
         self.release()?;
         let already_inhibited = self.configuring;
         self.configuring = true;
-        let result = tokio::time::timeout(Duration::from_secs(3), self.radios.apply(change)).await;
+        let result = tokio::time::timeout(Duration::from_secs(3), self.radios.update(edit)).await;
         match result {
             Ok(result) => match result {
                 Ok(snapshot) => {
