@@ -24,7 +24,8 @@ Use an authorized private server and two separate headset endpoints, one running
 | Basic PTT release at both endpoints | TX indication turns off immediately on release and the other endpoint stops receiving | User reported the requested check working correctly on 2026-11-17. Exact input method and measured stop latency were not recorded. |
 | Manual Linux disconnect/reconnect | Reconnected client starts with TX off, transmits only after a fresh PTT press, and speech works both ways again | User reported the requested check working on 2026-11-17. |
 | Speech quality | Assess intelligibility, perceived delay, clipping and drops | Detailed assessment pending |
-| Wrong frequency/modulation/key/coalition; guard | Only eligible audio plays; matched guard works | Pending |
+| Windows-to-Linux frequency isolation | With other Linux radios and guard off, Windows radio 1 at 251.000 MHz AM is silent on Linux radio 1 at 252.000 MHz AM; returning Linux to 251.000 MHz AM restores speech | User reported the requested check working on 2026-11-17. |
+| Reverse-direction frequency isolation; wrong modulation/key/coalition; guard | Only eligible audio plays; matched guard works | Pending |
 | Both/Left/Right and mono; multiple speakers, mute/volume | Correct ears and levels; no stale partial frame after routing change | Pending |
 | Focused key/Space/pointer and enabled background keyboard/HOTAS | Fresh release/press required; no stuck TX or unwanted source takeover | Pending |
 | Unplug input/output or change OS route while speaking | Audio stops, TX releases; no automatic fallback or resumed hold | Pending |
@@ -37,9 +38,11 @@ The user connected stock SRS 2.4.1.0 on a Windows laptop and the Rust desktop cl
 
 The user subsequently reported the manual Linux disconnect/reconnect check working: TX starts off after reconnect, transmission requires a fresh PTT press, and two-way speech resumes. This is a manual reconnect result; forced network loss, automatic retry and disconnect with PTT held were not part of the requested check.
 
+The Windows-to-Linux frequency isolation check was also reported working. With other Linux radios and guard disabled, Windows radio 1 transmitted on 251.000 MHz AM while Linux radio 1 was tuned to 252.000 MHz AM: Linux stayed silent. Returning Linux to 251.000 MHz AM restored speech. This checks the combined server/client receive behavior in that direction; reverse-direction frequency isolation, modulation, encryption key, coalition and guard behavior were not covered by this check.
+
 The prepared test used Blue External AWACS Mode, radio 1 at 251.000 MHz AM, with encryption off. The running Linux development build came from clean source `be92335989ea7143fe968dd56ac50887e7cedecb`, whose tree matches merged main `bcf2c8f1525d8ad599c7b375f84edd10f50950cd`. Its executable SHA-256 is `ce1d1756186e2632fe47aa3939a5864903a100d946def774f23e8d8d700cfdc0`.
 
-Headset/microphone models, drivers, Windows version, chosen PTT input, test duration, detailed speech quality and latency were not reported. Input-specific PTT calibration/focus/background behavior, radio isolation, stereo routing, device removal, interruption/automatic recovery and soak checks remain pending. No voice recording was collected by the agent; credentials, network addresses and device identifiers are excluded from this record.
+Headset/microphone models, drivers, Windows version, chosen PTT input, test duration, detailed speech quality and latency were not reported. Input-specific PTT calibration/focus/background behavior, remaining radio isolation cases, stereo routing, device removal, interruption/automatic recovery and soak checks remain pending. No voice recording was collected by the agent; credentials, network addresses and device identifiers are excluded from this record.
 
 ## Repeatable software checks
 
