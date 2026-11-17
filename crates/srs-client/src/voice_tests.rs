@@ -16,6 +16,20 @@ fn authorization() -> Authorization {
         },
         unit_id: 100_000_001,
     });
+    let mut radios = [srs_core::ReceiveRadio::default(); 11];
+    radios[1] = srs_core::ReceiveRadio {
+        frequency_hz: 251_000_000.0,
+        encryption_key: Some(7),
+        modulation: Modulation::AM,
+        ..srs_core::ReceiveRadio::default()
+    };
+    auth.receive = Some(std::sync::Arc::new(crate::receive::Policy {
+        radios,
+        unit: 100_000_001,
+        strict: false,
+        irl_tx: false,
+        global: vec![],
+    }));
     auth
 }
 async fn registered() -> (
@@ -247,4 +261,211 @@ async fn registration_retries_after_a_lost_initial_keepalive() {
     assert!(voice.is_ready());
     assert!(!voice.is_transmitting());
     echo.await.unwrap();
+}
+
+fn audio_packet(voice: &VoiceConnection, sequence: u64) -> ReceivedVoice {
+    let mut encoder = srs_audio::Encoder::new().unwrap();
+    let pcm = std::array::from_fn(|i| {
+        (12000.0 * (std::f64::consts::TAU * 700.0 * i as f64 / 16000.0).sin()) as i16
+    });
+    let mut bytes = [0; srs_audio::MAX_OPUS_BYTES];
+    let len = encoder.encode(&pcm, &mut bytes).unwrap();
+    ReceivedVoice {
+        generation: voice.authorization.borrow().revision,
+        receiver: voice.id,
+        audio: bytes[..len].to_vec(),
+        frequencies: vec![Frequency {
+            hz: 251_000_000.0,
+            modulation: Modulation::AM,
+            encryption: 7,
+        }],
+        unit_id: 100_000_001,
+        packet_number: sequence,
+        retransmission_count: 0,
+        original_client_id: ClientId::from_bytes(b"BBBBBBBBBBBBBBBBBBBBBB").unwrap(),
+        client_id: ClientId::from_bytes(b"BBBBBBBBBBBBBBBBBBBBBB").unwrap(),
+        received_at: Instant::now(),
+    }
+}
+fn update_policy(
+    auth: &watch::Sender<Authorization>,
+    change: impl FnOnce(&mut crate::receive::Policy),
+) {
+    auth.send_modify(|auth| {
+        auth.revision += 1;
+        change(std::sync::Arc::make_mut(auth.receive.as_mut().unwrap()));
+    });
+}
+
+#[tokio::test(start_paused = true)]
+async fn receive_gate_rejects_wrong_keys_and_modulation_but_allows_guard() {
+    use crate::receive::QueueOutcome;
+    let (mut voice, _server, _peer, auth, _live) = registered().await;
+    let mut packet = audio_packet(&voice, 1);
+    packet.frequencies[0].encryption = 8;
+    assert_eq!(
+        voice.buffer_voice(&packet).unwrap(),
+        QueueOutcome::Ineligible
+    );
+    packet.frequencies[0].encryption = 0;
+    assert!(matches!(
+        voice.buffer_voice(&packet).unwrap(),
+        QueueOutcome::Queued | QueueOutcome::Resynchronized
+    ));
+    update_policy(&auth, |p| p.strict = true);
+    packet.generation = auth.borrow().revision;
+    assert_eq!(
+        voice.buffer_voice(&packet).unwrap(),
+        QueueOutcome::Ineligible
+    );
+    packet.frequencies[0].encryption = 7;
+    packet.frequencies[0].modulation = Modulation::FM;
+    assert_eq!(
+        voice.buffer_voice(&packet).unwrap(),
+        QueueOutcome::Ineligible
+    );
+    update_policy(&auth, |p| {
+        p.radios[1].frequency_hz = 305_000_000.0;
+        p.radios[1].guard_hz = 251_000_000.0;
+    });
+    packet.generation = auth.borrow().revision;
+    voice.buffer_voice(&packet).unwrap();
+    tokio::time::advance(Duration::from_millis(80)).await;
+    let mut pcm = [0; srs_audio::OUTPUT_SAMPLES];
+    let frame = voice.poll_audio(&mut pcm).unwrap().unwrap();
+    assert!(frame.secondary);
+    assert_eq!(frame.radio, 1);
+    assert!(pcm.iter().any(|&x| x != 0));
+}
+
+#[tokio::test(start_paused = true)]
+async fn tune_and_control_revocation_clear_queued_audio_before_playout() {
+    let (mut voice, _server, _peer, auth, live) = registered().await;
+    let packet = audio_packet(&voice, 1);
+    voice.buffer_voice(&packet).unwrap();
+    update_policy(&auth, |p| p.radios[1].frequency_hz = 305_000_000.0);
+    assert_eq!(
+        voice.buffer_voice(&packet).unwrap(),
+        crate::receive::QueueOutcome::Stale
+    );
+    tokio::time::advance(Duration::from_millis(80)).await;
+    let mut pcm = [99; srs_audio::OUTPUT_SAMPLES];
+    assert!(voice.poll_audio(&mut pcm).unwrap().is_none());
+    assert!(pcm.iter().all(|&x| x == 0));
+    update_policy(&auth, |p| p.radios[1].frequency_hz = 251_000_000.0);
+    voice.buffer_voice(&audio_packet(&voice, 2)).unwrap();
+    live.send_replace(false);
+    assert_eq!(
+        voice.poll_audio(&mut pcm),
+        Err(VoiceError::ControlDisconnected)
+    );
+    assert!(pcm.iter().all(|&x| x == 0));
+}
+
+#[tokio::test(start_paused = true)]
+async fn transmit_blocking_rechecks_backlog_and_global_exception() {
+    let (mut voice, _server, _peer, auth, _live) = registered().await;
+    update_policy(&auth, |p| p.irl_tx = true);
+    voice.buffer_voice(&audio_packet(&voice, 1)).unwrap();
+    voice.press_ptt(1).unwrap();
+    voice.release_ptt();
+    assert_eq!(voice.audio_deadline().unwrap(), None);
+    voice.press_ptt(1).unwrap();
+    assert_eq!(
+        voice.buffer_voice(&audio_packet(&voice, 2)).unwrap(),
+        crate::receive::QueueOutcome::Ineligible
+    );
+    update_policy(&auth, |p| p.global.push(251_000_000.0));
+    voice.press_ptt(1).unwrap();
+    assert!(matches!(
+        voice.buffer_voice(&audio_packet(&voice, 3)).unwrap(),
+        crate::receive::QueueOutcome::Queued | crate::receive::QueueOutcome::Resynchronized
+    ));
+    // Client global matching is exact, unlike the frequency tolerance.
+    let mut packet = audio_packet(&voice, 4);
+    packet.frequencies[0].hz += 1.0;
+    assert_eq!(
+        voice.buffer_voice(&packet).unwrap(),
+        crate::receive::QueueOutcome::Ineligible
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn duplicate_relays_decode_once_and_delayed_handoff_is_discarded() {
+    let (mut voice, _server, _peer, _auth, _live) = registered().await;
+    let mut packet = audio_packet(&voice, 10);
+    voice.buffer_voice(&packet).unwrap();
+    packet.client_id = ClientId::from_bytes(b"CCCCCCCCCCCCCCCCCCCCCC").unwrap();
+    packet.retransmission_count = 1;
+    assert_eq!(
+        voice.buffer_voice(&packet).unwrap(),
+        crate::receive::QueueOutcome::Duplicate
+    );
+    tokio::time::advance(Duration::from_millis(80)).await;
+    let mut pcm = [0; srs_audio::OUTPUT_SAMPLES];
+    assert_eq!(
+        voice.poll_audio(&mut pcm).unwrap().unwrap().packet_number,
+        10
+    );
+    assert!(voice.poll_audio(&mut pcm).unwrap().is_none());
+    tokio::time::advance(Duration::from_millis(40)).await;
+    packet.packet_number = 11;
+    assert_eq!(
+        voice.buffer_voice(&packet).unwrap(),
+        crate::receive::QueueOutcome::Stale
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn speaker_capacity_rejects_newcomers_until_an_idle_slot_is_available() {
+    let (mut voice, _server, _peer, _auth, _live) = registered().await;
+    let mut packet = audio_packet(&voice, 1);
+    for i in 0..crate::receive::MAX_SPEAKERS {
+        let mut id = [b'A'; 22];
+        id[0] += i as u8;
+        packet.original_client_id = ClientId::from_bytes(&id).unwrap();
+        assert!(matches!(
+            voice.buffer_voice(&packet).unwrap(),
+            crate::receive::QueueOutcome::Queued | crate::receive::QueueOutcome::Resynchronized
+        ));
+    }
+    packet.original_client_id = ClientId::from_bytes(b"ZZZZZZZZZZZZZZZZZZZZZZ").unwrap();
+    assert_eq!(
+        voice.buffer_voice(&packet).unwrap(),
+        crate::receive::QueueOutcome::Capacity
+    );
+    tokio::time::advance(Duration::from_secs(2)).await;
+    packet.received_at = Instant::now();
+    assert!(matches!(
+        voice.buffer_voice(&packet).unwrap(),
+        crate::receive::QueueOutcome::Queued | crate::receive::QueueOutcome::Resynchronized
+    ));
+}
+
+#[tokio::test(start_paused = true)]
+async fn voice_timeout_and_close_never_return_queued_audio() {
+    let (mut voice, _server, _peer, _auth, _live) = registered().await;
+    voice.buffer_voice(&audio_packet(&voice, 1)).unwrap();
+    tokio::time::advance(VOICE_TIMEOUT).await;
+    let mut pcm = [99; srs_audio::OUTPUT_SAMPLES];
+    assert_eq!(voice.poll_audio(&mut pcm), Err(VoiceError::Timeout));
+    assert!(pcm.iter().all(|&x| x == 0));
+    voice.close();
+    assert_eq!(voice.audio_deadline(), Err(VoiceError::NotReady));
+}
+
+#[tokio::test(start_paused = true)]
+async fn peer_disconnect_allows_sequence_restart_without_releasing_local_ptt() {
+    let (mut voice, _server, _peer, _auth, _live) = registered().await;
+    let mut packet = audio_packet(&voice, 1_000);
+    voice.press_ptt(1).unwrap();
+    voice.buffer_voice(&packet).unwrap();
+    voice.forget_speaker(packet.original_client_id);
+    assert!(voice.is_transmitting());
+    assert!(voice.audio_deadline().unwrap().is_none());
+    packet.packet_number = 1;
+    assert_eq!(
+        voice.buffer_voice(&packet).unwrap(),
+        crate::receive::QueueOutcome::Queued
+    );
 }

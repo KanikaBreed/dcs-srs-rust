@@ -7,5 +7,11 @@ repository.workspace = true
 publish.workspace = true
 description = "Shared radio-domain foundation for DCS SRS Rust"
 
+[dependencies]
+srs-protocol = { path = "../srs-protocol" }
+
+[dev-dependencies]
+serde_json = "1.0.154"
+
 [lints]
 workspace = true

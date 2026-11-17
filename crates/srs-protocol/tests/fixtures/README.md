@@ -1,4 +1,4 @@
-# Independent upstream wire fixtures
+# Independent upstream wire and radio fixtures
 
 Source: [Ciribob and contributors' DCS-SimpleRadioStandalone at d01f540ce5e363e9ac841775c8f7e2253138cd81](https://github.com/ciribob/DCS-SimpleRadioStandalone/tree/d01f540ce5e363e9ac841775c8f7e2253138cd81), GPLv3. These files contain synthetic inputs only, not captured user traffic or real credentials. See [NOTICE.md](../../../../NOTICE.md).
 
@@ -11,8 +11,9 @@ Source: [Ciribob and contributors' DCS-SimpleRadioStandalone at d01f540ce5e363e9
 | `keepalive.bin` | The synthetic 22-byte identity used by upstream tests; upstream UDP handlers use this form for keepalive/endpoint discovery. |
 | `ping.jsonl`, `sync.jsonl`, `eam.jsonl`, `radio-update.jsonl`, `version-mismatch.jsonl` | Actual upstream `NetworkMessage.Encode`, JSON resolver, and client/radio models; covers field casing, null omission, enum numbers, 11 radio slots, Unicode, and a deliberately fake EAM password. |
 | `message-types.json`, `modulations.json` | Values read from the actual upstream C# enums. |
+| `radio-matching.json` | 46 synthetic decisions from unchanged `PlayerRadioInfoBase.CanHearTransmission`; Rust checks them in `srs-core`, with one explicit guard-key correction documented in the receive guide. |
 
-The harness links upstream packet/model code unchanged. Its only non-wire shims are logging and the updater/version provider. The provider uses the same entry-assembly version expression as upstream; the harness assembly pins `2.3.8.0` as a deterministic fixture value. That value is not a claim that the newer reference checkout is release 2.3.8.0. Full server/client session testing has not yet been performed.
+The harness links upstream packet/model code unchanged. Its only non-wire shims are logging and the updater/version provider. The provider uses the same entry-assembly version expression as upstream; the harness assembly pins `2.3.8.0` as a deterministic fixture value. That value is not a claim that the newer reference checkout is release 2.3.8.0. Stock-server control/generated voice tests are documented in [VOICE.md](../../../../docs/VOICE.md); full stock desktop-client voice testing remains pending.
 
 The generator requires the exact clean reference revision and compares generated UDP bytes with the literal upstream test arrays. Rust-generated JSON is compared semantically because member order and equivalent escaping differ across serializers; UDP output must match byte for byte.
 
@@ -34,4 +35,4 @@ cargo run --locked -p srs-protocol --example roundtrip_fixtures -- crates/srs-pr
 python3 scripts/reference_fixtures.py --reference /path/to/DCS-SRS-reference --verify-dir .scratch/rust-wire
 ```
 
-This verifies 12 files in both directions without opening a network socket or audio device. Linux CI repeats the check from a freshly fetched pinned reference.
+This verifies 13 fixture files (the radio decision JSON is copied unchanged by the wire example and tested separately by `srs-core`) without opening a network socket or audio device. Linux CI repeats the check from a freshly fetched pinned reference.

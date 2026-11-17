@@ -8,6 +8,7 @@
 //! public async operation also closes TCP; reconnect with a new session.
 
 mod model;
+pub mod receive;
 mod transport;
 pub mod voice;
 
@@ -244,6 +245,7 @@ impl Session {
         if let Some(revision) = previous.checked_add(1) {
             authorization.revision = revision;
             if self.coalition.is_some() {
+                authorization.receive = self.receive_policy().ok();
                 for (slot, radio) in self.radios.iter().enumerate() {
                     if radio.modulation != Modulation::DISABLED
                         && (radio.modulation == Modulation::INTERCOM
@@ -339,6 +341,7 @@ impl Session {
         self.voice_authorization.send_modify(|authorization| {
             authorization.revision = authorization.revision.saturating_add(1);
             authorization.channels = [None; RADIO_COUNT];
+            authorization.receive = None;
         });
         let mut transport = self.transport.take().ok_or(Error::Disconnected)?;
         transport.send(&message).await?;
@@ -449,6 +452,7 @@ impl Session {
         }
         let was_authenticated = self.coalition.is_some();
         let mut radios_adjusted = false;
+        let mut receive_changed = false;
         if let Some(settings) = message.server_settings {
             // Upstream merges settings, including partial updates. Bound the
             // accumulated map as well as each frame to prevent incremental growth.
@@ -462,7 +466,15 @@ impl Session {
             {
                 return Err(Error::ResourceLimit);
             }
+            receive_changed = [
+                "STRICT_RADIO_ENCRYPTION",
+                "IRL_RADIO_TX",
+                "GLOBAL_LOBBY_FREQUENCIES",
+            ]
+            .iter()
+            .any(|key| self.settings.get(*key) != combined.get(*key));
             self.settings = combined;
+            self.receive_policy()?; // validate before retaining a receive authorization
             if !self.setting_bool("EXTERNAL_AWACS_MODE", false)? {
                 self.coalition = None;
                 self.radios = disabled_radios();
@@ -530,6 +542,9 @@ impl Session {
             self.publish_voice_authorization();
             Ok(Event::RadiosAdjusted)
         } else {
+            if receive_changed {
+                self.publish_voice_authorization();
+            }
             Ok(event)
         }
     }

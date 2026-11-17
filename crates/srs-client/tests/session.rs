@@ -426,11 +426,15 @@ async fn periodic_refresh_keeps_idle_session_current_without_echo_pings() {
         assert_eq!(update["Client"]["Coalition"], 2);
         send(&mut peer, json!({"MsgType":1})).await;
     });
+    // The refresh deadline is initialized during connect, before login. Paused
+    // time may advance while real socket readiness is delivered on another OS.
+    // Measure from before connect, rather than assuming login takes zero time.
+    let started = tokio::time::Instant::now();
     let mut client = Session::connect(address, identity(), options())
         .await
         .unwrap();
+    tokio::time::advance(Duration::from_millis(250)).await;
     client.authenticate(PASSWORD).await.unwrap();
-    let started = tokio::time::Instant::now();
     client.next_event().await.unwrap();
     assert!(started.elapsed() >= Duration::from_secs(60));
     server.await.unwrap();
@@ -570,4 +574,99 @@ async fn cancelling_control_read_immediately_revokes_an_existing_udp_ptt() {
     );
     echo.await.unwrap();
     server.await.unwrap();
+}
+
+#[tokio::test]
+async fn receive_settings_invalidate_queued_audio_without_changing_local_radios() {
+    use srs_client::{receive::QueueOutcome, voice::VoiceEvent};
+    use srs_protocol::voice::{Frequency, VoicePacket};
+    let (listener, address) = listener().await;
+    let udp = tokio::net::UdpSocket::bind(address).await.unwrap();
+    let echo = tokio::spawn(async move {
+        let mut bytes = [0; 22];
+        let (_, peer) = udp.recv_from(&mut bytes).await.unwrap();
+        udp.send_to(&bytes, peer).await.unwrap();
+        (udp, peer)
+    });
+    let server = tokio::spawn(async move {
+        let mut peer = accept(listener).await;
+        login(&mut peer, 2).await;
+        read(&mut peer).await;
+        peer
+    });
+    let mut client = Session::connect(address, identity(), options())
+        .await
+        .unwrap();
+    client.authenticate(PASSWORD).await.unwrap();
+    let mut radios = disabled_radios();
+    radios[1] = Radio::tuned(251_000_000.0, Modulation::AM);
+    radios[1].encryption_key = Some(7);
+    client.set_radios(radios).await.unwrap();
+    let mut server = server.await.unwrap();
+    let mut voice = client.open_voice().await.unwrap();
+    let (udp, address) = echo.await.unwrap();
+    let mut encoder = srs_audio::Encoder::new().unwrap();
+    let mut bytes = [0; 4000];
+    let len = encoder.encode(&[0; 640], &mut bytes).unwrap();
+    let packet = VoicePacket {
+        audio: &bytes[..len],
+        frequencies: vec![Frequency {
+            hz: 251_000_000.0,
+            modulation: Modulation::AM,
+            encryption: 0,
+        }],
+        unit_id: 100000001,
+        packet_number: 1,
+        retransmission_count: 0,
+        client_id: ClientId::from_bytes(PEER.as_bytes()).unwrap(),
+        original_client_id: ClientId::from_bytes(PEER.as_bytes()).unwrap(),
+    }
+    .encode()
+    .unwrap();
+    udp.send_to(&packet, address).await.unwrap();
+    let VoiceEvent::Voice(frame) = voice.next_event().await.unwrap() else {
+        panic!("expected voice");
+    };
+    assert!(matches!(
+        voice.buffer_voice(&frame).unwrap(),
+        QueueOutcome::Queued | QueueOutcome::Resynchronized
+    ));
+    assert!(voice.audio_deadline().unwrap().is_some());
+    send(
+        &mut server,
+        json!({"MsgType":4,"ServerSettings":{"STRICT_RADIO_ENCRYPTION":"true"}}),
+    )
+    .await;
+    assert_eq!(client.next_event().await.unwrap(), Event::SettingsUpdated);
+    assert!(voice.audio_deadline().unwrap().is_none());
+    assert!(matches!(
+        voice.next_event().await.unwrap(),
+        VoiceEvent::AuthorizationChanged
+    ));
+    udp.send_to(&packet, address).await.unwrap();
+    let VoiceEvent::Voice(frame) = voice.next_event().await.unwrap() else {
+        panic!("expected voice");
+    };
+    assert_eq!(
+        voice.buffer_voice(&frame).unwrap(),
+        QueueOutcome::Ineligible
+    );
+    // Partial settings updates preserve strictness; MHz parsing grants global
+    // decryption override only, and still obeys strict local key matching.
+    send(
+        &mut server,
+        json!({"MsgType":4,"ServerSettings":{"GLOBAL_LOBBY_FREQUENCIES":" 251 ,invalid, NaN "}}),
+    )
+    .await;
+    assert_eq!(client.next_event().await.unwrap(), Event::SettingsUpdated);
+    assert_eq!(client.settings()["STRICT_RADIO_ENCRYPTION"], "true");
+    send(
+        &mut server,
+        json!({"MsgType":4,"ServerSettings":{"STRICT_RADIO_ENCRYPTION":"invalid"}}),
+    )
+    .await;
+    assert_eq!(client.next_event().await, Err(Error::InvalidMessage));
+    let mut pcm = [99; srs_audio::OUTPUT_SAMPLES];
+    assert!(voice.poll_audio(&mut pcm).is_err());
+    assert!(pcm.iter().all(|&x| x == 0));
 }

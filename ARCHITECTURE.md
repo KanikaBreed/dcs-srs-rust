@@ -2,9 +2,9 @@
 
 ## Present implementation
 
-`crates/srs-protocol` implements UDP voice packets and identity keepalives, a TCP control envelope, and bounded incremental newline framing. It has independent C# fixtures, malformed-input/regression tests, and fuzz entry points. Nested client/radio control payloads are preserved as JSON; typed domain rules are not implemented yet.
+`crates/srs-protocol` implements UDP voice packets and identity keepalives, a TCP control envelope, and bounded incremental newline framing. It has independent C# fixtures, malformed-input/regression tests, and fuzz entry points. Nested peer client/radio control payloads are preserved as JSON. Local receive rules live in `srs-core`.
 
-`crates/srs-client` implements a caller-driven Tokio TCP session, version checks, External AWACS Mode authentication, bounded peer/settings snapshots, and an 11-slot standalone radio state. Its stock-server probe verifies control interoperability with SRS 2.4.1.0. `crates/srs-core` remains a library scaffold; reusable radio eligibility and PTT rules are still planned. `srs-client::voice` adds UDP registration/keepalives, bounded receive, and PTT invalidation tied to the exact TCP connection and radio authorization revision. `srs-audio` wraps Opus encoding/decoding with fixed buffers. Generated audio passes through the stock server and the original C# codec wrappers. Receive eligibility/jitter buffering, audio devices, hardware PTT, and UI remain pending. See [the session contract](docs/SESSION.md) and [voice contract](docs/VOICE.md).
+`crates/srs-client` implements a caller-driven Tokio TCP session, version checks, External AWACS Mode authentication, bounded peer/settings snapshots, and an 11-slot standalone radio state. Its stock-server probe verifies control interoperability with SRS 2.4.1.0. `crates/srs-core` implements pure receive-radio eligibility with independent C# cases. `srs-client::voice` adds UDP registration/keepalives, bounded receive, and PTT invalidation tied to the exact TCP connection and radio authorization revision. `srs-audio` wraps Opus encoding/decoding with fixed buffers. Generated audio passes through the stock server and the original C# codec wrappers. `srs-client::receive` applies current radio/key/PTT policy and owns up to 16 original-speaker jitter/decoder states. `srs-audio::jitter` reorders before decoding and bounds latency, queues, and concealment. Audio devices, hardware PTT, and UI remain pending. See [receive behavior](docs/RECEIVE.md). See [the session contract](docs/SESSION.md) and [voice contract](docs/VOICE.md).
 
 ## Boundaries
 
@@ -21,10 +21,10 @@ flowchart TB
 
 | Planned component | Responsibility | Exclusions |
 |---|---|---|
-| `srs-core` | Radio identities, eligibility rules, PTT/session state, configuration models | UI, native device handles, network I/O |
+| `srs-core` (receive matching implemented) | Pure radio/key/intercom eligibility; further domain models planned | UI, native device handles, network I/O |
 | `srs-protocol` (implemented wire layer) | Bounded TCP JSON envelope/framing, UDP encoding/decoding, independent fixtures | Typed radio rules, device capture, sockets |
-| `srs-client` (TCP/EAM/UDP implemented) | Control state, UDP transport, session-bound PTT gating; reconnect planned | UI framework dependencies, audio devices, automatic playback |
-| `srs-audio` (Opus adapter implemented) | Fixed-frame codec API; jitter buffer, mixing, resampling/effects, and audio queues planned | Device handles, UI state mutation, unbounded buffering |
+| `srs-client` (TCP/EAM/UDP implemented) | Control state, UDP transport, session-bound PTT and receive gating; reconnect planned | UI framework dependencies, audio devices, automatic playback |
+| `srs-audio` (Opus and jitter implemented) | Fixed-frame codec, bounded sequence/jitter/PLC; mixing, resampling/effects, and device queues planned | Device handles, UI state mutation, unbounded buffering |
 | Platform adapters | Audio I/O, device changes, hardware PTT, permissions, lifecycle | Duplicated radio/protocol rules |
 | Application UI | Responsive radio console, settings, diagnostics | Codec and routing decisions in callbacks |
 | DCS adapter | Existing Lua export/update interfaces, later cockpit support | Rewriting every aircraft script at bootstrap |
@@ -58,10 +58,10 @@ DCS cockpit/terrain state belongs to a later adapter. A phone in TOC mode does n
 
 - Root Markdown: onboarding, agent rules, architecture, tasks, notices.
 - `docs/`: scope, protocol, testing, platform, UI, reporting, and release guides.
-- `crates/srs-core/`: the radio-domain scaffold.
+- `crates/srs-core/`: pure receive matching and independent C# matcher cases.
 - `crates/srs-protocol/`: wire codecs, tests, fixtures, and an offline round-trip example.
 - `crates/srs-client/`: TCP/EAM session, UDP voice/PTT gating, local radio state, and stock-server probes.
-- `crates/srs-audio/`: fixed-frame Opus adapter, tests, and offline codec probe.
+- `crates/srs-audio/`: fixed-frame Opus, bounded jitter buffer, impairment simulations, and offline codec/load probes.
 - `tools/voice-reference/`: unchanged upstream C# codec wrappers linked into a generated-signal harness.
 - `scripts/test_reference_codec.py`: bidirectional Rust/C# codec verification.
 - `scripts/test_stock_server.py`: checksum-pinned official server verification in an isolated Linux network.
