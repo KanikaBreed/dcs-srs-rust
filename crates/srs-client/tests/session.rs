@@ -426,11 +426,15 @@ async fn periodic_refresh_keeps_idle_session_current_without_echo_pings() {
         assert_eq!(update["Client"]["Coalition"], 2);
         send(&mut peer, json!({"MsgType":1})).await;
     });
+    // The refresh deadline is initialized during connect, before login. Paused
+    // time may advance while real socket readiness is delivered on another OS.
+    // Measure from before connect, rather than assuming login takes zero time.
+    let started = tokio::time::Instant::now();
     let mut client = Session::connect(address, identity(), options())
         .await
         .unwrap();
+    tokio::time::advance(Duration::from_millis(250)).await;
     client.authenticate(PASSWORD).await.unwrap();
-    let started = tokio::time::Instant::now();
     client.next_event().await.unwrap();
     assert!(started.elapsed() >= Duration::from_secs(60));
     server.await.unwrap();
