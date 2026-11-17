@@ -35,8 +35,16 @@ jobs:
         run: rustup show
       - name: Check native codec build tools
         run: cmake --version
+      - name: Install Linux audio build dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libasound2-dev pkg-config libopus0
       - name: Check documentation and Rust workspace
         run: python scripts/check.py
+      - name: Verify isolated native null audio
+        if: matrix.os == 'ubuntu-latest'
+        run: python scripts/test_null_audio.py
       - name: Compile fuzz targets
         if: matrix.os == 'ubuntu-latest'
         run: cargo check --manifest-path fuzz/Cargo.toml --bins --locked
@@ -65,11 +73,6 @@ jobs:
           git -C "$srs_reference" checkout --detach FETCH_HEAD
           cargo run --locked -p srs-protocol --example roundtrip_fixtures -- crates/srs-protocol/tests/fixtures "$RUNNER_TEMP/rust-wire"
           python scripts/reference_fixtures.py --reference "$srs_reference" --verify-dir "$RUNNER_TEMP/rust-wire"
-      - name: Install native reference codec
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends libopus0
       - name: Verify Opus with original C# wrappers
         if: matrix.os == 'ubuntu-latest'
         shell: bash

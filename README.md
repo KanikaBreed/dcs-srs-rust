@@ -4,7 +4,7 @@ A Rust client project for [DCS SimpleRadio Standalone](https://github.com/ciribo
 
 The first product is a standalone **TOC (tactical operations center) radio console**: monitor several radio nets and transmit with push-to-talk through an existing SRS server, without running DCS on the operator's device.
 
-**Status: generated voice and receive pipeline.** Rust connects to SRS, authenticates coalition access, exchanges radio state, and sends/receives generated Opus audio through the unmodified SRS 2.4.1.0 server. UDP keepalives and session-bound PTT gating are implemented. Original C# codec wrappers verify Opus in both directions. Radio/key eligibility, bounded packet ordering, jitter buffering, and loss concealment are implemented and tested with generated audio. Microphone/speaker I/O, hardware PTT, UI, and mobile applications remain pending; this is not yet an installable voice app.
+**Status: generated voice and receive pipeline.** Rust connects to SRS, authenticates coalition access, exchanges radio state, and sends/receives generated Opus audio through the unmodified SRS 2.4.1.0 server. UDP keepalives and session-bound PTT gating are implemented. Original C# codec wrappers verify Opus in both directions. Radio/key eligibility, bounded packet ordering, jitter buffering, and loss concealment are implemented and tested with generated audio. A desktop audio adapter and explicit local device probe are implemented, with physical headset validation and live SRS device integration still pending. Hardware PTT, UI, and mobile applications remain pending; this is not yet an installable voice app.
 
 ## Product direction
 
@@ -19,7 +19,7 @@ Standalone coalition operation uses SRS External AWACS Mode. Server administrato
 
 ## Development
 
-Install [Rust through rustup](https://rustup.rs), a native toolchain with a C compiler and CMake for your host, and Python 3.11 or newer. The Opus dependency builds its bundled native library. The checked-in toolchain file selects stable Rust with rustfmt and clippy.
+Install [Rust through rustup](https://rustup.rs), a native toolchain with a C compiler and CMake for your host, and Python 3.11 or newer. The Opus dependency builds its bundled native library. Linux also needs ALSA development headers and pkg-config (`libasound2-dev pkg-config` on Debian/Ubuntu). The checked-in toolchain file selects stable Rust with rustfmt and clippy.
 
 ```sh
 git clone https://github.com/KanikaBreed/dcs-srs-rust.git
@@ -54,6 +54,16 @@ python3 scripts/test_stock_server.py
 ```
 
 It downloads the pinned official server to `.scratch`, checks its SHA-256, builds a Rust probe, and runs control and generated-voice scenarios in a private network namespace. Requires `unshare`, `ip`, and permission to create a user/network namespace. No microphone is opened. See [session usage](docs/SESSION.md) and [voice/codec behavior and limits](docs/VOICE.md).
+
+## Try local audio
+
+The [device guide](docs/DEVICES.md) describes intentional tone, capture, and headphone-loopback probes. Start with help; it opens no devices:
+
+```sh
+cargo run --locked -p srs-device --bin audio_probe -- --help
+```
+
+The probe does not connect to SRS or record audio. Physical device validation is pending.
 
 ## Project guides
 
