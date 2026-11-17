@@ -304,7 +304,7 @@ fn generated_audio_crosses_capture_conversion_opus_and_output_bridge() {
     callback.process(&mut output, start);
     let energy = output.iter().map(|&x| (x as f64).powi(2)).sum::<f64>() / output.len() as f64;
     assert!(energy > 0.05);
-    assert!(output.chunks_exact(2).all(|f| f[0] == f[1]));
+    assert!(output.as_chunks::<2>().0.iter().all(|f| f[0] == f[1]));
 }
 #[test]
 fn device_config_selection_has_no_silent_rate_or_channel_fallback() {

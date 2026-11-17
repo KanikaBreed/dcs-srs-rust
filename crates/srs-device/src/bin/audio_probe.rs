@@ -37,8 +37,8 @@ fn parse(args: &[String]) -> Result<Options, &'static str> {
     let mut input = None;
     let mut output = None;
     let mut seconds = None;
-    let mut pairs = args[1..].chunks_exact(2);
-    for pair in &mut pairs {
+    let (pairs, remainder) = args[1..].as_chunks::<2>();
+    for pair in pairs {
         match pair[0].as_str() {
             "--input" if input.is_none() => input = Some(pair[1].clone()),
             "--output" if output.is_none() => output = Some(pair[1].clone()),
@@ -48,7 +48,7 @@ fn parse(args: &[String]) -> Result<Options, &'static str> {
             _ => return Err("unknown or duplicate option"),
         }
     }
-    if !pairs.remainder().is_empty() {
+    if !remainder.is_empty() {
         return Err("option needs a value");
     }
     let seconds = seconds
