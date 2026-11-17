@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 //! One joinable thread per explicitly started session. No UI or audio callback
 //! executes network/codec work. Passwords are never formatted or persisted.
+use crate::endpoint::Endpoint;
 use crate::input::{Intent, Lease, Update};
 use srs_client::receive::{DEFAULT_MONITOR, Monitor};
 use srs_client::{
@@ -10,7 +11,6 @@ use srs_device::native::{Input, Output};
 use srs_protocol::voice::{ClientId, Modulation};
 use srs_toc::{Phase, Status};
 use std::{
-    net::SocketAddr,
     thread::JoinHandle,
     time::{Duration, Instant},
 };
@@ -34,15 +34,19 @@ pub enum Problem {
     Identity,
     Frequency,
     Profile,
+    Resolve,
+    Network,
 }
+#[derive(Clone)]
 pub struct Config {
-    pub address: SocketAddr,
+    pub address: Endpoint,
     pub callsign: String,
     pub password: String,
     pub input: String,
     pub output: String,
     pub radios: [Radio; RADIO_COUNT],
     pub monitor: Monitor,
+    pub retry: bool,
 }
 impl Config {
     pub fn parse(
@@ -52,10 +56,7 @@ impl Config {
         input: String,
         output: String,
     ) -> Result<Self, Problem> {
-        let address: SocketAddr = address.trim().parse().map_err(|_| Problem::Address)?;
-        if address.port() == 0 || address.ip().is_unspecified() || address.ip().is_multicast() {
-            return Err(Problem::Address);
-        }
+        let address = Endpoint::parse(address)?;
         let callsign = callsign.trim();
         if callsign.is_empty() || callsign.len() > 128 || callsign.chars().any(char::is_control) {
             return Err(Problem::Callsign);
@@ -71,6 +72,7 @@ impl Config {
             output,
             radios: disabled_radios(),
             monitor: DEFAULT_MONITOR,
+            retry: false,
         })
     }
 }
@@ -104,6 +106,9 @@ pub struct Snapshot {
     pub editing: bool,
     pub finished: bool,
     pub completed_edit: u64,
+    pub details: srs_toc::observation::SessionDetails,
+    pub retry_attempt: u8,
+    pub monitor: Monitor,
 }
 impl Default for Snapshot {
     fn default() -> Self {
@@ -114,6 +119,9 @@ impl Default for Snapshot {
             editing: false,
             finished: false,
             completed_edit: 0,
+            details: srs_toc::observation::SessionDetails::default(),
+            retry_attempt: 0,
+            monitor: DEFAULT_MONITOR,
         }
     }
 }
@@ -139,6 +147,7 @@ impl Handle {
         let (edits, requests) = mpsc::channel(1);
         let (view, receiver) = watch::channel(Snapshot {
             radios: config.radios.clone(),
+            monitor: config.monitor,
             ..Snapshot::default()
         });
         let thread = std::thread::Builder::new()
@@ -152,7 +161,7 @@ impl Handle {
                         tokio::select! {
                             biased;
                             _ = cancelled(stopped) => Ok(()),
-                            result = connected(config, inputs, requests, levels, &view) => result,
+                            result = reconnecting(config, inputs, requests, levels, &view) => result,
                         }
                     }),
                     Err(_) => Err(Problem::Runtime),
@@ -196,52 +205,156 @@ async fn cancelled(mut stop: watch::Receiver<bool>) {
         }
     }
 }
-async fn connected(
+fn network(error: srs_client::Error) -> bool {
+    matches!(
+        error,
+        srs_client::Error::Io(_) | srs_client::Error::Timeout | srs_client::Error::Disconnected
+    )
+}
+fn session_problem(error: srs_toc::Error) -> Problem {
+    use srs_client::voice::VoiceError;
+    match error {
+        srs_toc::Error::Control(e) if network(e) => Problem::Network,
+        srs_toc::Error::Voice(
+            VoiceError::Io(_) | VoiceError::Timeout | VoiceError::ControlDisconnected,
+        ) => Problem::Network,
+        srs_toc::Error::Device(_) => Problem::Device,
+        srs_toc::Error::Control(
+            srs_client::Error::EamDisabled
+            | srs_client::Error::AuthenticationRejected
+            | srs_client::Error::NotAuthenticated,
+        ) => Problem::Authenticate,
+        srs_toc::Error::Control(srs_client::Error::PolicyDenied) => Problem::Radio,
+        _ => Problem::Session,
+    }
+}
+const RETRY_DELAYS: [Duration; 3] = [
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+    Duration::from_secs(4),
+];
+async fn reconnecting(
     mut config: Config,
-    mut inputs: watch::Receiver<Intent>,
+    inputs: watch::Receiver<Intent>,
     mut edits: mpsc::Receiver<Edit>,
     mut monitor: watch::Receiver<Monitor>,
     view: &watch::Sender<Snapshot>,
 ) -> Result<(), Problem> {
-    let mut session = Session::connect(
-        config.address,
-        identity(config.callsign)?,
-        Options::default(),
-    )
-    .await
-    .map_err(|_| Problem::Connect)?;
+    if !config.retry {
+        // Do not retain a second password copy for a non-retrying session.
+        return connected(config, inputs, &mut edits, monitor, view).await;
+    }
+    let mut delays = RETRY_DELAYS.into_iter().enumerate();
+    loop {
+        // The snapshot includes acknowledged presets. Consume the GUI watch's
+        // older target so it cannot overwrite that preset on a fresh attempt.
+        monitor.borrow_and_update();
+        // Each attempt owns a new TCP/UDP session, identity and native streams.
+        // connected drops all of these before the next backoff begins.
+        let result = connected(
+            config.clone(),
+            inputs.clone(),
+            &mut edits,
+            monitor.clone(),
+            view,
+        )
+        .await;
+        if result != Err(Problem::Network) {
+            return result;
+        }
+        let Some((attempt, delay)) = delays.next() else {
+            return result;
+        };
+        let snapshot = view.borrow().clone();
+        config.radios = snapshot.radios;
+        config.monitor = snapshot.monitor;
+        while edits.try_recv().is_ok() {} // queued edits belong to the failed session
+        view.send_modify(|s| {
+            s.status.phase = Phase::Connecting;
+            s.retry_attempt = (attempt + 1) as u8;
+            s.editing = false;
+            s.problem = Problem::None;
+        });
+        tokio::time::sleep(delay).await;
+    }
+}
+async fn connected(
+    mut config: Config,
+    mut inputs: watch::Receiver<Intent>,
+    edits: &mut mpsc::Receiver<Edit>,
+    mut monitor: watch::Receiver<Monitor>,
+    view: &watch::Sender<Snapshot>,
+) -> Result<(), Problem> {
+    view.send_modify(|s| {
+        s.problem = Problem::None;
+        s.status.phase = Phase::Connecting;
+    });
+    let addresses = config.address.resolve().await?;
+    let mut connected = None;
+    for address in addresses {
+        let result = Session::connect(
+            address,
+            identity(config.callsign.clone())?,
+            Options::default(),
+        )
+        .await;
+        match result {
+            Ok(session) => {
+                connected = Some(session);
+                break;
+            }
+            Err(error) if network(error) => (),
+            Err(_) => return Err(Problem::Connect),
+        }
+    }
+    let mut session = connected.ok_or(Problem::Network)?;
     let auth = session.authenticate(&config.password).await;
     config.password.clear();
-    auth.map_err(|_| Problem::Authenticate)?;
+    auth.map_err(|e| {
+        if network(e) {
+            Problem::Network
+        } else {
+            Problem::Authenticate
+        }
+    })?;
     // Validate the prepared radios against current server policy before audio opens.
-    session
-        .set_radios(config.radios)
-        .await
-        .map_err(|_| Problem::Radio)?;
+    session.set_radios(config.radios).await.map_err(|e| {
+        if network(e) {
+            Problem::Network
+        } else {
+            Problem::Radio
+        }
+    })?;
     let mut capture = Input::open(&config.input).map_err(|_| Problem::Device)?;
     let mut playback = Output::open(&config.output).map_err(|_| Problem::Device)?;
     capture.start().map_err(|_| Problem::Device)?;
     playback.start().map_err(|_| Problem::Device)?;
     let (mut controller, events) = srs_toc::controls();
     controller.set_monitor(config.monitor);
+    let mut current_monitor = config.monitor;
     let (status_tx, status) = srs_toc::status_channel();
     let (radios_tx, radios) = watch::channel(session.radios().clone());
-    let run = srs_toc::run_observed(
+    let (details_tx, details) =
+        watch::channel(srs_toc::observation::SessionDetails::read(&session));
+    let run = srs_toc::run_with_views(
         session,
         capture.reader(),
         playback.writer(),
         events,
         status_tx,
         Some(radios_tx),
+        Some(details_tx),
     );
     let drive = async {
         let mut lease = Lease::default();
+        lease.update(*inputs.borrow_and_update(), false, Instant::now());
         let mut released = true;
         let mut ticker = tokio::time::interval(Duration::from_millis(25));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             if monitor.has_changed().unwrap_or(false) {
-                controller.set_monitor(*monitor.borrow_and_update());
+                current_monitor = *monitor.borrow_and_update();
+                controller.set_monitor(current_monitor);
             }
             let current = *status.borrow();
             let ready = matches!(current.phase, Phase::Receiving | Phase::Transmitting);
@@ -270,12 +383,14 @@ async fn connected(
             }
             view.send_modify(|snapshot| {
                 snapshot.status = current;
+                snapshot.monitor = current_monitor;
+                snapshot.details = details.borrow().clone();
                 snapshot.radios = radios.borrow().clone();
             });
             tokio::select! {
                 biased;
                 changed = inputs.changed() => { if changed.is_err() { return Ok(()); } },
-                _ = monitor.changed() => { controller.set_monitor(*monitor.borrow_and_update()); },
+                _ = monitor.changed() => { current_monitor = *monitor.borrow_and_update(); controller.set_monitor(current_monitor); },
                 edit = edits.recv() => {
                     let Some(edit) = edit else { return Ok(()); };
                     let _ = controller.release();
@@ -291,6 +406,7 @@ async fn connected(
                         // Consume the old GUI target; the acknowledged preset is
                         // authoritative until a subsequent intentional level edit.
                         monitor.borrow_and_update();
+                        current_monitor = levels;
                         controller.set_monitor(levels);
                     }
                     // Any action held while an edit was in flight is consumed.
@@ -299,6 +415,7 @@ async fn connected(
                         s.editing = false;
                         s.completed_edit = edit.id;
                         s.radios = radios.borrow().clone();
+                        s.monitor = current_monitor;
                         if result.is_err() { s.problem = Problem::Radio; }
                     });
                 },
@@ -308,7 +425,7 @@ async fn connected(
     };
     tokio::select! {
         biased;
-        result = run => result.map(|_| ()).map_err(|_| Problem::Session),
+        result = run => result.map(|_| ()).map_err(session_problem),
         result = drive => result,
     }
 }
@@ -316,6 +433,129 @@ async fn connected(
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn test_config(address: std::net::SocketAddr) -> Config {
+        let mut config = Config::parse(
+            &address.to_string(),
+            "Fixture",
+            "test".into(),
+            "default".into(),
+            "default".into(),
+        )
+        .unwrap();
+        config.retry = true;
+        config
+    }
+    fn test_intent() -> Intent {
+        Intent {
+            generation: 0,
+            radio: None,
+            at: Instant::now(),
+        }
+    }
+    #[tokio::test]
+    async fn network_recovery_has_three_retries_and_fresh_identities() {
+        use tokio::{
+            io::{AsyncBufReadExt, BufReader},
+            net::TcpListener,
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let config = test_config(listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let mut ids = std::collections::HashSet::new();
+            for _ in 0..4 {
+                let mut peer = BufReader::new(listener.accept().await.unwrap().0);
+                let mut line = String::new();
+                peer.read_line(&mut line).await.unwrap();
+                let message: serde_json::Value = serde_json::from_str(&line).unwrap();
+                assert!(ids.insert(message["Client"]["ClientGuid"].as_str().unwrap().to_owned()));
+                // Close during SYNC; no authentication or native device opening.
+            }
+            ids.len()
+        });
+        let (_input, inputs) = watch::channel(test_intent());
+        let (_edit, edits) = mpsc::channel(1);
+        let (_monitor, monitor) = watch::channel(DEFAULT_MONITOR);
+        let (view, _) = watch::channel(Snapshot::default());
+        let began = Instant::now();
+        assert_eq!(
+            reconnecting(config, inputs, edits, monitor, &view).await,
+            Err(Problem::Network)
+        );
+        assert_eq!(server.await.unwrap(), 4);
+        assert_eq!(view.borrow().retry_attempt, 3);
+        assert!(began.elapsed() >= Duration::from_secs(7));
+    }
+    #[tokio::test]
+    async fn authentication_rejection_does_not_retry_or_open_devices() {
+        use tokio::{
+            io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+            net::TcpListener,
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let config = test_config(listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let mut peer = BufReader::new(listener.accept().await.unwrap().0);
+            let mut line = String::new();
+            peer.read_line(&mut line).await.unwrap();
+            peer.get_mut().write_all(b"{\"MsgType\":2,\"Version\":\"2.4.1.0\",\"Clients\":[],\"ServerSettings\":{\"EXTERNAL_AWACS_MODE\":\"true\"}}\n").await.unwrap();
+            line.clear();
+            peer.read_line(&mut line).await.unwrap();
+            peer.get_mut()
+                .write_all(b"{\"MsgType\":7,\"Client\":{\"Coalition\":0}}\n")
+                .await
+                .unwrap();
+        });
+        let (_input, inputs) = watch::channel(test_intent());
+        let (_edit, edits) = mpsc::channel(1);
+        let (_monitor, monitor) = watch::channel(DEFAULT_MONITOR);
+        let (view, _) = watch::channel(Snapshot::default());
+        assert_eq!(
+            reconnecting(config, inputs, edits, monitor, &view).await,
+            Err(Problem::Authenticate)
+        );
+        assert_eq!(view.borrow().retry_attempt, 0);
+        server.await.unwrap();
+    }
+    #[test]
+    fn device_policy_and_protocol_errors_are_terminal() {
+        assert_eq!(
+            session_problem(srs_toc::Error::Device(srs_device::Error::Stopped)),
+            Problem::Device
+        );
+        assert_eq!(
+            session_problem(srs_toc::Error::Control(srs_client::Error::EamDisabled)),
+            Problem::Authenticate
+        );
+        assert_eq!(
+            session_problem(srs_toc::Error::Control(srs_client::Error::PolicyDenied)),
+            Problem::Radio
+        );
+        assert_eq!(
+            session_problem(srs_toc::Error::Control(srs_client::Error::InvalidMessage)),
+            Problem::Session
+        );
+        assert_eq!(
+            session_problem(srs_toc::Error::Control(srs_client::Error::Disconnected)),
+            Problem::Network
+        );
+    }
+    #[test]
+    fn disconnect_cancels_pending_recovery_without_waiting_for_backoff() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let config = test_config(listener.local_addr().unwrap());
+        let mut handle = Handle::start(config, test_intent()).unwrap();
+        let (peer, _) = listener.accept().unwrap();
+        drop(peer);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while handle.view.borrow_and_update().retry_attempt == 0 {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let began = Instant::now();
+        handle.stop();
+        drop(handle);
+        assert!(began.elapsed() < Duration::from_millis(500));
+    }
     #[test]
     fn configuration_rejects_invalid_values_without_opening_devices_or_network() {
         assert!(
@@ -328,12 +568,7 @@ mod tests {
             )
             .is_ok()
         );
-        for address in [
-            "hostname:5002",
-            "127.0.0.1:0",
-            "0.0.0.0:5002",
-            "224.0.0.1:5002",
-        ] {
+        for address in ["127.0.0.1:0", "0.0.0.0:5002", "224.0.0.1:5002"] {
             assert!(
                 Config::parse(
                     address,

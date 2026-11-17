@@ -53,17 +53,29 @@ pub struct Preset {
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct Preferences {
+    pub ptt_key: u8,
+}
+impl Default for Preferences {
+    fn default() -> Self {
+        Self { ptt_key: 8 }
+    }
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Data {
     version: u32,
     pub servers: Vec<Server>,
     pub presets: Vec<Preset>,
+    pub preferences: Preferences,
 }
 impl Default for Data {
     fn default() -> Self {
         Self {
-            version: 2,
+            version: 3,
             servers: vec![],
             presets: vec![],
+            preferences: Preferences::default(),
         }
     }
 }
@@ -187,7 +199,8 @@ impl Data {
             let mut seen = std::collections::HashSet::new();
             names.into_iter().all(|name| seen.insert(name))
         }
-        self.version == 2
+        self.version == 3
+            && self.preferences.ptt_key <= 12
             && self.servers.len() <= MAX_ENTRIES
             && self.presets.len() <= MAX_ENTRIES
             && self.servers.iter().all(Server::valid)
@@ -223,6 +236,9 @@ pub enum StoreError {
     Invalid = 3,
     Conflict = 4,
     Busy = 5,
+    NameConflict = 6,
+    Exists = 7,
+    Canceled = 8,
 }
 fn read(path: &Path) -> Result<Option<Vec<u8>>, StoreError> {
     match File::open(path) {
@@ -241,7 +257,7 @@ fn read(path: &Path) -> Result<Option<Vec<u8>>, StoreError> {
     }
 }
 // Keep the v1 wire types strict and separate: unknown/duplicate fields must
-// still fail, and future additions to v2 must not silently relax migration.
+// still fail, and future additions to the current schema must not silently relax migration.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LegacyRadio {
@@ -265,6 +281,13 @@ struct LegacyData {
     servers: Vec<Server>,
     presets: Vec<LegacyPreset>,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyV2 {
+    version: u32,
+    servers: Vec<Server>,
+    presets: Vec<Preset>,
+}
 fn decode(bytes: &[u8]) -> Result<Data, StoreError> {
     #[derive(Deserialize)]
     struct Header {
@@ -278,7 +301,8 @@ fn decode(bytes: &[u8]) -> Result<Data, StoreError> {
                 return Err(StoreError::Invalid);
             }
             Data {
-                version: 2,
+                version: 3,
+                preferences: Preferences::default(),
                 servers: old.servers,
                 presets: old
                     .presets
@@ -299,7 +323,19 @@ fn decode(bytes: &[u8]) -> Result<Data, StoreError> {
                     .collect(),
             }
         }
-        2 => serde_json::from_slice(bytes).map_err(|_| StoreError::Invalid)?,
+        2 => {
+            let old: LegacyV2 = serde_json::from_slice(bytes).map_err(|_| StoreError::Invalid)?;
+            if old.version != 2 {
+                return Err(StoreError::Invalid);
+            }
+            Data {
+                version: 3,
+                servers: old.servers,
+                presets: old.presets,
+                preferences: Preferences::default(),
+            }
+        }
+        3 => serde_json::from_slice(bytes).map_err(|_| StoreError::Invalid)?,
         _ => return Err(StoreError::Invalid),
     };
     if !data.valid() {
@@ -368,9 +404,81 @@ impl Store {
         Ok(data)
     }
 }
+// This interchange format deliberately contains only user-created radio presets.
+// It is not the upstream SRS server preset format or our complete profiles file.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Bundle {
+    format: String,
+    version: u32,
+    presets: Vec<Preset>,
+}
+const BUNDLE_FORMAT: &str = "dcs-srs-rust-radio-presets";
+fn import_presets(path: &Path, mut data: Data) -> Result<Data, StoreError> {
+    let bytes = read(path)?.ok_or(StoreError::Io)?;
+    let bundle: Bundle = serde_json::from_slice(&bytes).map_err(|_| StoreError::Invalid)?;
+    if bundle.format != BUNDLE_FORMAT || bundle.version != 1 {
+        return Err(StoreError::Invalid);
+    }
+    let incoming = Data {
+        presets: bundle.presets,
+        ..Data::default()
+    };
+    if !data.valid()
+        || !incoming.valid()
+        || data.presets.len() + incoming.presets.len() > MAX_ENTRIES
+    {
+        return Err(StoreError::Invalid);
+    }
+    if incoming
+        .presets
+        .iter()
+        .any(|p| data.presets.iter().any(|old| old.name == p.name))
+    {
+        return Err(StoreError::NameConflict);
+    }
+    data.presets.extend(incoming.presets);
+    Ok(data)
+}
+fn export_presets(path: &Path, data: &Data) -> Result<(), StoreError> {
+    if !data.valid() {
+        return Err(StoreError::Invalid);
+    }
+    let bytes = serde_json::to_vec_pretty(&Bundle {
+        format: BUNDLE_FORMAT.into(),
+        version: 1,
+        presets: data.presets.clone(),
+    })
+    .map_err(|_| StoreError::Invalid)?;
+    if bytes.len() > MAX_BYTES {
+        return Err(StoreError::Invalid);
+    }
+    let parent = path.parent().ok_or(StoreError::Io)?;
+    let mut file = tempfile::NamedTempFile::new_in(parent).map_err(|_| StoreError::Io)?;
+    file.write_all(&bytes).map_err(|_| StoreError::Io)?;
+    file.as_file().sync_all().map_err(|_| StoreError::Io)?;
+    file.persist_noclobber(path).map_err(|e| {
+        if e.error.kind() == std::io::ErrorKind::AlreadyExists {
+            StoreError::Exists
+        } else {
+            StoreError::Io
+        }
+    })?;
+    Ok(())
+}
 pub enum Command {
     Reload,
     Save(Data),
+    Import {
+        data: Data,
+        title: String,
+        filter: String,
+    },
+    Export {
+        data: Data,
+        title: String,
+        filter: String,
+    },
 }
 pub struct Worker {
     sender: Option<SyncSender<Command>>,
@@ -404,6 +512,28 @@ impl Worker {
                     let result = match command {
                         Command::Reload => store.load(),
                         Command::Save(data) => store.save(data),
+                        Command::Import {
+                            data,
+                            title,
+                            filter,
+                        } => rfd::FileDialog::new()
+                            .set_title(title)
+                            .add_filter(filter, &["json"])
+                            .pick_file()
+                            .ok_or(StoreError::Canceled)
+                            .and_then(|path| import_presets(&path, data))
+                            .and_then(|data| store.save(data)),
+                        Command::Export {
+                            data,
+                            title,
+                            filter,
+                        } => rfd::FileDialog::new()
+                            .set_title(title)
+                            .add_filter(filter, &["json"])
+                            .set_file_name("srs-radio-presets.json")
+                            .save_file()
+                            .ok_or(StoreError::Canceled)
+                            .and_then(|path| export_presets(&path, &data).map(|()| data)),
                     };
                     if results.send(result).is_err() {
                         break;
@@ -481,6 +611,91 @@ mod tests {
         data
     }
     #[test]
+    fn v2_migration_preserves_radios_and_adds_explicit_saved_ptt_binding() {
+        let mut old = serde_json::to_value(example()).unwrap();
+        old["version"] = 2.into();
+        old.as_object_mut().unwrap().remove("preferences");
+        old["presets"][0]["radios"][0]["volume"] = 42.into();
+        let mut data = decode(&serde_json::to_vec(&old).unwrap()).unwrap();
+        assert_eq!(data.preferences.ptt_key, 8);
+        assert_eq!(data.presets[0].monitor().unwrap()[1].percent(), 42);
+        data.preferences.ptt_key = 12;
+        assert_eq!(decode(&serde_json::to_vec(&data).unwrap()).unwrap(), data);
+        data.preferences.ptt_key = 0;
+        assert!(decode(&serde_json::to_vec(&data).unwrap()).is_ok());
+        data.preferences.ptt_key = 13;
+        assert_eq!(
+            decode(&serde_json::to_vec(&data).unwrap()),
+            Err(StoreError::Invalid)
+        );
+        old["preferences"] = serde_json::json!({"ptt_key": 9});
+        assert_eq!(
+            decode(&serde_json::to_vec(&old).unwrap()),
+            Err(StoreError::Invalid)
+        );
+    }
+    #[test]
+    fn preset_transfer_omits_connections_and_never_overwrites_files_or_name_conflicts() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("presets.json");
+        let data = example();
+        export_presets(&path, &data).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let text = std::str::from_utf8(&bytes).unwrap();
+        for excluded in [
+            "servers",
+            "127.0.0.1",
+            "device:a",
+            "preferences",
+            "password",
+            "SECRET",
+            "callsign",
+        ] {
+            assert!(!text.contains(excluded));
+        }
+        let imported = import_presets(&path, Data::default()).unwrap();
+        assert_eq!(imported.presets, data.presets);
+        assert!(imported.servers.is_empty());
+        assert_eq!(
+            import_presets(&path, data.clone()),
+            Err(StoreError::NameConflict)
+        );
+        assert_eq!(
+            export_presets(&path, &Data::default()),
+            Err(StoreError::Exists)
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        let profile_path = dir.path().join("profiles.json");
+        let mut s = store(profile_path.clone());
+        s.load().unwrap();
+        s.save(imported).unwrap();
+        assert_eq!(store(profile_path).load().unwrap().presets, data.presets);
+    }
+    #[test]
+    fn malformed_and_oversized_transfers_do_not_change_the_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("presets.json");
+        let mut value = serde_json::to_value(Bundle {
+            format: BUNDLE_FORMAT.into(),
+            version: 1,
+            presets: example().presets,
+        })
+        .unwrap();
+        value["presets"][0]["radios"][9]["volume"] = 101.into();
+        let invalid_radio = serde_json::to_vec(&value).unwrap();
+        value["presets"][0]["radios"][9]["volume"] = 100.into();
+        value["password"] = "do not accept".into();
+        for bytes in [
+            invalid_radio,
+            serde_json::to_vec(&value).unwrap(),
+            vec![b' '; MAX_BYTES + 1],
+            br#"{"format":"unknown","version":1,"presets":[]}"#.to_vec(),
+        ] {
+            std::fs::write(&path, bytes).unwrap();
+            assert_eq!(import_presets(&path, example()), Err(StoreError::Invalid));
+        }
+    }
+    #[test]
     fn persisted_setup_roundtrips_without_credentials_and_replaces_atomically() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("profiles.json");
@@ -517,7 +732,7 @@ mod tests {
         duplicate.servers.push(duplicate.servers[0].clone());
         for bytes in [
             b"{broken".to_vec(),
-            br#"{"version":3,"servers":[],"presets":[]}"#.to_vec(),
+            br#"{"version":4,"servers":[],"presets":[]}"#.to_vec(),
             vec![b' '; MAX_BYTES + 1],
             serde_json::to_vec(&invalid).unwrap(),
             serde_json::to_vec(&duplicate).unwrap(),
@@ -577,11 +792,12 @@ mod tests {
         );
     }
     #[test]
-    fn v1_migrates_in_memory_only_and_receive_levels_roundtrip_in_v2() {
+    fn v1_migrates_in_memory_only_and_receive_levels_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("profiles.json");
         let mut old = serde_json::to_value(example()).unwrap();
         old["version"] = 1.into();
+        old.as_object_mut().unwrap().remove("preferences");
         for radio in old["presets"][0]["radios"].as_array_mut().unwrap() {
             radio.as_object_mut().unwrap().remove("volume");
             radio.as_object_mut().unwrap().remove("muted");
@@ -598,7 +814,7 @@ mod tests {
             .unwrap();
         s.save(data).unwrap();
         let data = store(path.clone()).load().unwrap();
-        assert_eq!(data.version, 2);
+        assert_eq!(data.version, 3);
         assert_eq!(data.presets[0].monitor().unwrap(), levels);
         let mut invalid = serde_json::to_value(data).unwrap();
         invalid["presets"][0]["radios"][1]["volume"] = 101.into();

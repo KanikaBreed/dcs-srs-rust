@@ -1,16 +1,15 @@
 #![forbid(unsafe_code)]
 use crate::{
+    devices,
     input::UiInput,
+    keyboard,
     profiles::{self, Command, Data, Preset, Server, Worker},
     session::{Config, Edit, Handle, Problem, frequency},
-    ui::{MainWindow, RadioRow, Strings},
+    ui::{MainWindow, PeerRow, PolicyRow, RadioRow, Strings},
 };
 use slint::winit_030::{
     EventResult, WinitWindowAccessor,
-    winit::{
-        event::{ElementState, WindowEvent},
-        keyboard::{Key, NamedKey},
-    },
+    winit::event::{ElementState, WindowEvent},
 };
 use slint::{ComponentHandle, ModelRc, SharedString, Timer, TimerMode, VecModel};
 use srs_client::receive::{DEFAULT_MONITOR, Monitor, RadioLevel};
@@ -19,7 +18,7 @@ use srs_client::{
     commands::{RadioChange, RadioEdit},
     disabled_radios,
 };
-use srs_device::native::{self, DeviceInfo, Direction};
+use srs_device::native::DeviceInfo;
 use srs_protocol::voice::Modulation;
 use srs_toc::{Phase, held::Input};
 use std::{
@@ -34,17 +33,29 @@ struct App {
     radios: [Radio; RADIO_COUNT],
     inputs: Vec<DeviceInfo>,
     outputs: Vec<DeviceInfo>,
+    discovery: Option<devices::Worker>,
+    discovering: bool,
+    wanted_input: String,
+    wanted_output: String,
+    missing_input: Option<String>,
+    missing_output: Option<String>,
+    ptt_key: u8,
+    modifiers: bool,
+    details: srs_toc::observation::SessionDetails,
     pending: Option<u64>,
     pending_selection: Option<usize>,
     pending_monitor: Option<Monitor>,
     monitor: Monitor,
     storage: Option<Worker>,
     storage_busy: bool,
+    load_preferences: bool,
+    transfer: i32,
     profiles: Data,
     next_edit: u64,
     stopping: bool,
     last_problem: Problem,
     last_received: [u64; RADIO_COUNT],
+    restore_monitor: bool,
     rx_until: [Instant; RADIO_COUNT],
     rx_active: [bool; RADIO_COUNT],
 }
@@ -132,6 +143,128 @@ fn names(values: impl Iterator<Item = String>) -> ModelRc<SharedString> {
     .into()
 }
 impl App {
+    fn rebind(&mut self, ui: &MainWindow, key: i32) {
+        if let Ok(key) = u8::try_from(key)
+            && key <= 12
+        {
+            self.invalidate(ui);
+            self.ptt_key = key;
+            ui.set_ptt_key(key as i32);
+            ui.set_controls_saved(self.profiles.preferences.ptt_key == key);
+        }
+    }
+    fn refresh_devices(&mut self, ui: &MainWindow) {
+        self.invalidate(ui);
+        if self.handle.is_some() || self.discovering {
+            return;
+        }
+        let selected = |devices: &[DeviceInfo], index: i32, missing: &Option<String>| {
+            device_id(devices, index).ok().or_else(|| {
+                (index == devices.len() as i32 + 1)
+                    .then(|| missing.clone())
+                    .flatten()
+            })
+        };
+        let Some(input) = selected(&self.inputs, ui.get_input_index(), &self.missing_input) else {
+            ui.set_problem(Problem::Device as i32);
+            return;
+        };
+        let Some(output) = selected(&self.outputs, ui.get_output_index(), &self.missing_output)
+        else {
+            ui.set_problem(Problem::Device as i32);
+            return;
+        };
+        self.wanted_input = input;
+        self.wanted_output = output;
+        self.discovering = self
+            .discovery
+            .as_ref()
+            .is_some_and(|worker| worker.refresh().is_ok());
+        ui.set_device_busy(self.discovering);
+        if !self.discovering {
+            ui.set_problem(Problem::Device as i32);
+        }
+    }
+    fn poll_devices(&mut self, ui: &MainWindow) {
+        if !self.discovering {
+            return;
+        }
+        let Some(result) = self.discovery.as_ref().and_then(devices::Worker::poll) else {
+            return;
+        };
+        self.discovering = false;
+        ui.set_device_busy(false);
+        match result {
+            Ok(list) => {
+                self.inputs = list.inputs;
+                self.outputs = list.outputs;
+                let (inputs, input) = restored_device(&self.inputs, &self.wanted_input, ui);
+                let (outputs, output) = restored_device(&self.outputs, &self.wanted_output, ui);
+                self.missing_input = device_index(&self.inputs, &self.wanted_input)
+                    .is_none()
+                    .then(|| self.wanted_input.clone());
+                self.missing_output = device_index(&self.outputs, &self.wanted_output)
+                    .is_none()
+                    .then(|| self.wanted_output.clone());
+                ui.set_inputs(inputs);
+                ui.set_outputs(outputs);
+                ui.set_input_index(input);
+                ui.set_output_index(output);
+                ui.set_problem(
+                    if self.missing_input.is_some() || self.missing_output.is_some() {
+                        Problem::Device as i32
+                    } else {
+                        0
+                    },
+                );
+            }
+            Err(_) => ui.set_problem(Problem::Device as i32),
+        }
+    }
+    fn publish_details(&mut self, ui: &MainWindow, details: srs_toc::observation::SessionDetails) {
+        if self.details == details {
+            return;
+        }
+        ui.set_server_version(details.version.as_str().into());
+        ui.set_coalition(details.coalition.map_or(-1, |c| c as i32));
+        ui.set_client_count(details.total_clients.to_string().into());
+        ui.set_peers(
+            Rc::new(VecModel::from(
+                details
+                    .clients
+                    .iter()
+                    .map(|peer| PeerRow {
+                        name: peer.name.as_str().into(),
+                        coalition: peer.coalition.map_or(-1, i32::from),
+                    })
+                    .collect::<Vec<_>>(),
+            ))
+            .into(),
+        );
+        ui.set_policy(
+            Rc::new(VecModel::from(
+                details
+                    .policy
+                    .iter()
+                    .enumerate()
+                    .map(|(index, value)| PolicyRow {
+                        index: index as i32,
+                        state: value.map_or(0, |value| if value { 1 } else { 2 }),
+                    })
+                    .collect::<Vec<_>>(),
+            ))
+            .into(),
+        );
+        ui.set_node_limit(
+            details
+                .retransmission_limit
+                .map(|n| n.to_string())
+                .unwrap_or_default()
+                .into(),
+        );
+        self.details = details;
+    }
+
     fn refresh_rows(&self, ui: &MainWindow) {
         ui.set_radios(rows(&self.radios, &self.monitor, &self.rx_active));
     }
@@ -171,6 +304,10 @@ impl App {
         ui.set_armed(false);
     }
     fn event(&mut self, ui: &MainWindow, source: usize, event: Input) {
+        if self.transfer != 0 {
+            self.invalidate(ui);
+            return;
+        }
         if ui.get_ready() && self.pending.is_none() && !self.stopping {
             self.ptt.event(source, event, Instant::now());
             self.publish(ui);
@@ -205,7 +342,7 @@ impl App {
         }
     }
     fn connect(&mut self, ui: &MainWindow) {
-        if self.handle.is_some() {
+        if self.handle.is_some() || self.discovering {
             return;
         }
         self.invalidate(ui);
@@ -214,6 +351,7 @@ impl App {
         let result = self.config(ui, password).and_then(|mut config| {
             config.radios = self.radios.clone();
             config.monitor = self.monitor;
+            config.retry = ui.get_retry();
             Handle::start(
                 config,
                 self.ptt.intent(ui.get_selected() as usize, Instant::now()),
@@ -226,11 +364,13 @@ impl App {
                 self.pending = None;
                 self.last_problem = Problem::None;
                 self.last_received = [0; RADIO_COUNT];
+                self.restore_monitor = false;
                 self.rx_until = [Instant::now(); RADIO_COUNT];
                 self.rx_active = [false; RADIO_COUNT];
                 self.refresh_rows(ui);
                 ui.set_problem(0);
                 ui.set_busy(true);
+                ui.set_page(0);
                 ui.set_phase(1);
                 ui.set_sent("0".into());
                 ui.set_received("0".into());
@@ -371,11 +511,43 @@ impl App {
     }
     fn profile_action(&mut self, ui: &MainWindow, action: i32) {
         self.invalidate(ui);
-        if self.storage_busy || self.pending.is_some() {
+        if self.storage_busy || self.pending.is_some() || self.discovering {
             return;
         }
         if action == 6 {
+            self.load_preferences = true;
             self.store_command(ui, Command::Reload);
+            return;
+        }
+        if action == 8 || action == 9 {
+            let title = if action == 8 {
+                ui.global::<Strings>().get_import_presets()
+            } else {
+                ui.global::<Strings>().get_export_presets()
+            }
+            .to_string();
+            let filter = ui.global::<Strings>().get_preset_file().to_string();
+            let data = self.profiles.clone();
+            self.store_command(
+                ui,
+                if action == 8 {
+                    Command::Import {
+                        data,
+                        title,
+                        filter,
+                    }
+                } else {
+                    Command::Export {
+                        data,
+                        title,
+                        filter,
+                    }
+                },
+            );
+            if self.storage_busy {
+                self.transfer = action;
+                ui.set_transfer_busy(true);
+            }
             return;
         }
         let result = self.profile_change(ui, action);
@@ -395,6 +567,12 @@ impl App {
                 ui.set_server(server.address.as_str().into());
                 ui.set_callsign(server.callsign.as_str().into());
                 ui.set_server_name(server.name.as_str().into());
+                self.missing_input = device_index(&self.inputs, &server.input)
+                    .is_none()
+                    .then(|| server.input.clone());
+                self.missing_output = device_index(&self.outputs, &server.output)
+                    .is_none()
+                    .then(|| server.output.clone());
                 ui.set_password("".into());
                 let (inputs, input) = restored_device(&self.inputs, &server.input, ui);
                 let (outputs, output) = restored_device(&self.outputs, &server.output, ui);
@@ -437,6 +615,7 @@ impl App {
                 }
                 data.presets.remove(index);
             }
+            7 => data.preferences.ptt_key = self.ptt_key,
             _ => return Err(Problem::Profile),
         }
         self.store_command(ui, Command::Save(data));
@@ -451,9 +630,16 @@ impl App {
         };
         self.storage_busy = false;
         ui.set_storage_busy(false);
+        let transfer = std::mem::take(&mut self.transfer);
+        let load_preferences = std::mem::take(&mut self.load_preferences);
+        ui.set_transfer_busy(false);
         match result {
             Ok(data) => {
+                if load_preferences {
+                    self.rebind(ui, data.preferences.ptt_key as i32);
+                }
                 self.profiles = data;
+                ui.set_controls_saved(self.profiles.preferences.ptt_key == self.ptt_key);
                 ui.set_saved_servers(names(self.profiles.servers.iter().map(|s| s.name.clone())));
                 ui.set_saved_presets(names(self.profiles.presets.iter().map(|p| p.name.clone())));
                 ui.set_server_index(
@@ -470,12 +656,19 @@ impl App {
                         .position(|p| p.name == ui.get_preset_name().as_str())
                         .map_or(-1, |i| i as i32),
                 );
-                ui.set_storage_status(0);
+                ui.set_storage_status(if transfer == 8 {
+                    10
+                } else if transfer == 9 {
+                    11
+                } else {
+                    0
+                });
             }
             Err(error) => ui.set_storage_status(error as i32),
         }
     }
     fn tick(&mut self, ui: &MainWindow) {
+        self.poll_devices(ui);
         self.poll_storage(ui);
         let now = Instant::now();
         self.ptt.tick(now);
@@ -484,11 +677,28 @@ impl App {
         };
         let snapshot = handle.view.borrow().clone();
         let finished = handle.finished();
+        self.publish_details(ui, snapshot.details.clone());
+        ui.set_retry_attempt(snapshot.retry_attempt as i32);
+        ui.set_rejected(snapshot.status.rejected_packets.to_string().into());
+        ui.set_overflows(snapshot.status.playback_overflows.to_string().into());
+        ui.set_clipped(snapshot.status.clipped_samples.to_string().into());
+        ui.set_speakers(snapshot.status.peak_speakers.to_string().into());
         let ready = !self.stopping
             && matches!(
                 snapshot.status.phase,
                 Phase::Receiving | Phase::Transmitting
             );
+        if !ready && snapshot.retry_attempt > 0 {
+            self.restore_monitor = true;
+            self.pending = None;
+            self.pending_selection = None;
+            self.pending_monitor = None;
+        }
+        if ready && std::mem::take(&mut self.restore_monitor) {
+            self.monitor = snapshot.monitor;
+            self.refresh_rows(ui);
+            self.editor(ui);
+        }
         if !ready || self.pending.is_some() {
             self.invalidate(ui);
         }
@@ -571,6 +781,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
     // Explicitly drop/join even while the window/callback objects still exist.
     app.borrow_mut().handle.take();
     app.borrow_mut().storage.take();
+    app.borrow_mut().discovery.take();
     result
 }
 type Application = (MainWindow, Rc<RefCell<App>>, Timer);
@@ -589,8 +800,9 @@ fn setup(profile_path: Option<std::path::PathBuf>) -> Result<Application, slint:
     };
     selector.select()?;
     let ui = MainWindow::new()?;
-    let inputs = native::devices(Direction::Input).unwrap_or_default();
-    let outputs = native::devices(Direction::Output).unwrap_or_default();
+    let inputs = Vec::new();
+    let outputs = Vec::new();
+    let discovery = devices::Worker::start().ok();
     let default_label = ui.global::<Strings>().get_system_default();
     ui.set_inputs(device_model(&inputs, default_label.clone()));
     ui.set_outputs(device_model(&outputs, default_label));
@@ -605,20 +817,34 @@ fn setup(profile_path: Option<std::path::PathBuf>) -> Result<Application, slint:
         radios,
         inputs,
         outputs,
+        discovery,
+        discovering: false,
+        wanted_input: "default".into(),
+        wanted_output: "default".into(),
+        missing_input: None,
+        missing_output: None,
+        ptt_key: 8,
+        modifiers: false,
+        details: srs_toc::observation::SessionDetails::default(),
         pending: None,
         pending_selection: None,
         pending_monitor: None,
         monitor: DEFAULT_MONITOR,
         storage_busy: storage.is_some(),
+        load_preferences: true,
+        transfer: 0,
         storage,
         profiles: Data::default(),
         next_edit: 0,
         stopping: false,
         last_problem: Problem::None,
         last_received: [0; RADIO_COUNT],
+        restore_monitor: false,
         rx_until: [Instant::now(); RADIO_COUNT],
         rx_active: [false; RADIO_COUNT],
     }));
+    app.borrow_mut().refresh_devices(&ui);
+    ui.set_app_version(env!("CARGO_PKG_VERSION").into());
     // Weak UI references prevent callback cycles. try_borrow_mut handles Slint's
     // nested pointer cancellation when a state update disables the PTT pad;
     // all disabling paths invalidate ownership before changing UI properties.
@@ -630,6 +856,18 @@ fn setup(profile_path: Option<std::path::PathBuf>) -> Result<Application, slint:
             });
         }};
     }
+    callback!(on_navigate, |state, window, page| {
+        if (0..=5).contains(&page) {
+            state.invalidate(&window);
+            window.set_page(page);
+        }
+    });
+    callback!(on_refresh_devices, |state, window| {
+        state.refresh_devices(&window);
+    });
+    callback!(on_rebind, |state, window, key| {
+        state.rebind(&window, key);
+    });
     callback!(on_connect_requested, |state, window| {
         state.connect(&window);
     });
@@ -688,12 +926,22 @@ fn setup(profile_path: Option<std::path::PathBuf>) -> Result<Application, slint:
                     state.ptt.focus(*focused, Instant::now());
                     state.publish(&window);
                 }
+                WindowEvent::ModifiersChanged(modifiers) => {
+                    state.modifiers = !modifiers.state().is_empty();
+                    if state.modifiers {
+                        state.invalidate(&window);
+                    }
+                }
                 WindowEvent::Occluded(true) => state.invalidate(&window),
                 WindowEvent::KeyboardInput {
                     event,
                     is_synthetic,
                     ..
-                } if event.logical_key == Key::Named(NamedKey::F8) => {
+                } if keyboard::matches(&event.logical_key, state.ptt_key) => {
+                    if state.modifiers {
+                        state.invalidate(&window);
+                        return EventResult::Propagate;
+                    }
                     let input = match (event.state, event.repeat, is_synthetic) {
                         (ElementState::Released, _, _) => Input::Release,
                         (_, true, _) | (_, _, true) => Input::Repeat,
@@ -714,6 +962,10 @@ fn setup(profile_path: Option<std::path::PathBuf>) -> Result<Application, slint:
             && let Ok(mut state) = state.try_borrow_mut()
         {
             state.disconnect(&window);
+            if state.transfer != 0 {
+                window.set_storage_status(9);
+                return slint::CloseRequestResponse::KeepWindowShown;
+            }
         }
         slint::CloseRequestResponse::HideWindow
     });
@@ -805,14 +1057,15 @@ mod tests {
         let profile_dir = tempfile::tempdir().unwrap();
         let (ui, app, heartbeat) = setup(Some(profile_dir.path().join("profiles.json"))).unwrap();
         ui.set_demonstration(true);
-        let peer_address = address.parse().unwrap();
-        ui.set_server(address.into());
+        let peer_address: std::net::SocketAddr = address.parse().unwrap();
+        let relay = crate::test_relay::Relay::new(peer_address);
+        let relay_port = relay.address.port();
+        ui.set_server(format!("localhost:{relay_port}").into());
+        ui.set_retry(true);
         ui.set_callsign("Synthetic desktop".into());
         ui.set_password("fixture-blue".into());
-        ui.invoke_connect_requested();
-        assert!(ui.get_password().is_empty());
         assert!(!ui.get_ready());
-        let step = Rc::new(RefCell::new(0));
+        let step = Rc::new(RefCell::new(-1));
         let complete = Rc::new(RefCell::new(false));
         let done = complete.clone();
         let weak = ui.as_weak();
@@ -851,6 +1104,11 @@ mod tests {
                 saw_rx = true;
             }
             match *step {
+                -1 if !ui.get_device_busy() => {
+                    ui.invoke_connect_requested();
+                    assert!(ui.get_password().is_empty());
+                    *step = 0;
+                }
                 0 if ui.get_ready()
                     && ui.window().with_winit_window(|window| window.has_focus()) == Some(true) =>
                 {
@@ -861,6 +1119,15 @@ mod tests {
                             .iter()
                             .all(|r| r.modulation == Modulation::DISABLED)
                     );
+                    assert_eq!(ui.get_server_version(), "2.4.1.0");
+                    assert_eq!(ui.get_coalition(), 2);
+                    assert_eq!(ui.get_policy().row_count(), 15);
+                    assert_eq!(ui.get_policy().row_data(7).unwrap().state, 1);
+                    for page in 0..=5 {
+                        ui.invoke_navigate(page);
+                        assert_eq!(ui.get_page(), page);
+                    }
+                    ui.invoke_navigate(0);
                     ui.set_frequency("251.125".into());
                     ui.invoke_edit_radio(0);
                     *step = 1;
@@ -981,7 +1248,7 @@ mod tests {
                     ui.set_password("must clear on load".into());
                     ui.set_server_index(0);
                     ui.invoke_profile_action(1);
-                    assert_eq!(ui.get_server(), peer_address.to_string());
+                    assert_eq!(ui.get_server(), format!("localhost:{relay_port}"));
                     assert_eq!(ui.get_callsign(), "Synthetic desktop");
                     assert!(ui.get_password().is_empty());
                     // Prepare an entire preset offline, without opening audio.
@@ -1056,6 +1323,101 @@ mod tests {
                     *step = 20;
                 }
                 20 if !ui.get_busy() => {
+                    ui.invoke_rebind(12);
+                    assert_eq!(ui.get_ptt_key(), 12);
+                    ui.invoke_profile_action(7);
+                    *step = 21;
+                }
+                21 if !ui.get_storage_busy() => {
+                    assert_eq!(ui.get_storage_status(), 0);
+                    ui.invoke_rebind(0);
+                    ui.invoke_profile_action(6);
+                    *step = 22;
+                }
+                22 if !ui.get_storage_busy() => {
+                    assert_eq!(ui.get_ptt_key(), 12);
+                    ui.invoke_refresh_devices();
+                    assert!(ui.get_device_busy());
+                    *step = 23;
+                }
+                23 if !ui.get_device_busy() => {
+                    assert_eq!(ui.get_input_index(), 0);
+                    assert_eq!(ui.get_output_index(), 0);
+                    ui.set_password("fixture-blue".into());
+                    ui.invoke_connect_requested();
+                    *step = 24;
+                }
+                24 if ui.get_ready() => {
+                    ui.invoke_pointer_input(1);
+                    ui.invoke_pointer_input(0);
+                    *step = 25;
+                }
+                25 if ui.get_phase() == 3 => {
+                    ui.invoke_navigate(3);
+                    assert!(state.borrow().ptt.intent(2, Instant::now()).radio.is_none());
+                    *step = 26;
+                }
+                26 if ui.get_phase() == 2 => {
+                    ui.invoke_pointer_input(1);
+                    ui.invoke_pointer_input(0);
+                    *step = 27;
+                }
+                27 if ui.get_phase() == 3 => {
+                    ui.invoke_rebind(0);
+                    assert!(state.borrow().ptt.intent(2, Instant::now()).radio.is_none());
+                    ui.invoke_disconnect_requested();
+                    *step = 28;
+                }
+                28 if !ui.get_busy() => {
+                    ui.set_password("fixture-blue".into());
+                    ui.invoke_connect_requested();
+                    *step = 29;
+                }
+                29 if ui.get_ready() => {
+                    ui.invoke_pointer_input(1);
+                    ui.invoke_pointer_input(0);
+                    *step = 30;
+                }
+                30 if ui.get_phase() == 3 => {
+                    relay.drop_connection();
+                    *step = 31;
+                }
+                31 if ui.get_phase() == 1 && ui.get_retry_attempt() == 1 => {
+                    assert!(!ui.get_ready());
+                    assert!(state.borrow().ptt.intent(2, Instant::now()).radio.is_none());
+                    *step = 32;
+                }
+                32 if ui.get_ready() => {
+                    assert_eq!(
+                        state
+                            .borrow()
+                            .handle
+                            .as_ref()
+                            .unwrap()
+                            .view
+                            .borrow()
+                            .monitor[2],
+                        RadioLevel::new(35, true).unwrap(),
+                        "stale GUI watch overwrote restored preset levels"
+                    );
+                    assert_eq!(state.borrow().radios[2].frequency_hz, 30.5e6);
+                    assert_eq!(ui.get_volume(), 35.);
+                    assert!(ui.get_muted());
+                    at = Instant::now();
+                    *step = 33;
+                }
+                33 if at.elapsed() >= Duration::from_millis(250) => {
+                    assert_eq!(ui.get_sent(), "0", "recovery resumed a held transmission");
+                    assert_eq!(ui.get_phase(), 2);
+                    ui.invoke_pointer_input(1);
+                    ui.invoke_pointer_input(0);
+                    *step = 34;
+                }
+                34 if ui.get_phase() == 3 => {
+                    ui.invoke_disconnect_requested();
+                    *step = 35;
+                }
+                35 if !ui.get_busy() => {
                     *done.borrow_mut() = true;
                     slint::quit_event_loop().unwrap();
                 }
@@ -1067,6 +1429,7 @@ mod tests {
         heartbeat.stop();
         app.borrow_mut().handle.take();
         app.borrow_mut().storage.take();
+        app.borrow_mut().discovery.take();
         let saved = std::fs::read_to_string(profile_dir.path().join("profiles.json")).unwrap();
         assert!(
             saved.contains("Ground net")

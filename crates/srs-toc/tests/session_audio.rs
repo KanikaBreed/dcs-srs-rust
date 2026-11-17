@@ -33,6 +33,7 @@ struct Harness {
     owner: Option<Controller>,
     status: watch::Receiver<Status>,
     radios: watch::Receiver<[Radio; srs_client::RADIO_COUNT]>,
+    details: watch::Receiver<srs_toc::observation::SessionDetails>,
     task: JoinHandle<Result<Status, Error>>,
     input: CaptureCallback,
     output: PlaybackCallback,
@@ -80,14 +81,16 @@ impl Harness {
         }
         let (status_tx, status) = srs_toc::status_channel();
         let (radios_tx, radios) = watch::channel(disabled_radios());
+        let (details_tx, details) = watch::channel(srs_toc::observation::SessionDetails::default());
         let task = tokio::spawn(async move {
-            srs_toc::run_observed(
+            srs_toc::run_with_views(
                 session,
                 &mut capture,
                 &mut playback,
                 inputs,
                 status_tx,
                 Some(radios_tx),
+                Some(details_tx),
             )
             .await
         });
@@ -102,6 +105,7 @@ impl Harness {
             owner: Some(owner),
             status,
             radios,
+            details,
             task,
             input,
             output,
@@ -577,5 +581,42 @@ async fn monitor_mute_flushes_partial_playback_and_tracks_muted_rx_without_tcp_e
     .await
     .unwrap();
     assert_eq!(h.status.borrow().playback_overflows, 0);
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn session_details_follow_roster_and_policy_without_private_fields() {
+    let mut h = Harness::new(false).await;
+    assert_eq!(h.details.borrow().version, "2.4.1.0");
+    assert_eq!(
+        h.details.borrow().coalition,
+        Some(srs_client::Coalition::Blue)
+    );
+    let peers: Vec<_> = (0..257).map(|index| json!({"ClientGuid":format!("{index:022}"),"Name":"Alpha\n\u{202e}Bravo", "Coalition":2, "LatLngPosition":{"lat":1.0}, "Private":"sensitive"})).collect();
+    send(&mut h.tcp, json!({"MsgType":2,"Version":"2.4.1.0","Clients":peers,
+        "ServerSettings":{"EXTERNAL_AWACS_MODE":"true", "ALLOW_RADIO_ENCRYPTION":"FALSE", "SHOW_TUNED_COUNT":"nonsense", "RETRANSMISSION_NODE_LIMIT":"3", "ADMIN_PASSWORD":"never-display"}})).await;
+    timeout(Duration::from_secs(3), async {
+        loop {
+            if h.details.borrow_and_update().total_clients == 257 {
+                break;
+            }
+            h.details.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    {
+        let details = h.details.borrow();
+        assert_eq!(details.clients.len(), 256);
+        assert_eq!(details.clients[0].name, "AlphaBravo");
+        assert_eq!(details.clients[0].coalition, Some(2));
+        assert_eq!(details.policy[8], Some(false));
+        assert_eq!(details.policy[10], None);
+        assert_eq!(details.retransmission_limit, Some(3));
+        let display = format!("{details:?}");
+        for excluded in ["sensitive", "never-display", "LatLngPosition", "ClientGuid"] {
+            assert!(!display.contains(excluded));
+        }
+    }
     h.stop().await;
 }

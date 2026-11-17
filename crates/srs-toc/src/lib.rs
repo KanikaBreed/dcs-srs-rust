@@ -2,6 +2,7 @@
 //! codecs, control/network I/O and mixing run here, outside device callbacks.
 pub mod held;
 mod input;
+pub mod observation;
 pub use input::{Controller, INPUT_LEASE, InputEvents, controls};
 use srs_audio::{Encoder, MAX_OPUS_BYTES, OUTPUT_SAMPLES};
 use srs_client::{
@@ -339,6 +340,7 @@ async fn pump(
     departed: mpsc::Sender<ClientId>,
     mut updates: srs_client::commands::RadioUpdates,
     radios: Option<watch::Sender<[srs_client::Radio; srs_client::RADIO_COUNT]>>,
+    details: Option<watch::Sender<observation::SessionDetails>>,
 ) -> Result<(), Error> {
     loop {
         let event = session
@@ -351,6 +353,17 @@ async fn pump(
                     false
                 } else {
                     *current = session.radios().clone();
+                    true
+                }
+            });
+        }
+        if let Some(details) = &details {
+            details.send_if_modified(|old| {
+                let new = observation::SessionDetails::read(&session);
+                if *old == new {
+                    false
+                } else {
+                    *old = new;
                     true
                 }
             });
@@ -386,6 +399,21 @@ pub async fn run_observed(
     status: watch::Sender<Status>,
     radios: Option<watch::Sender<[srs_client::Radio; srs_client::RADIO_COUNT]>>,
 ) -> Result<Status, Error> {
+    run_with_views(session, capture, playback, inputs, status, radios, None).await
+}
+/// Adds a bounded, sanitized client/server-policy view for desktop menus.
+pub async fn run_with_views(
+    session: Session,
+    capture: &mut CaptureReader,
+    playback: &mut PlaybackWriter,
+    inputs: InputEvents,
+    status: watch::Sender<Status>,
+    radios: Option<watch::Sender<[srs_client::Radio; srs_client::RADIO_COUNT]>>,
+    details: Option<watch::Sender<observation::SessionDetails>>,
+) -> Result<Status, Error> {
+    if let Some(details) = &details {
+        details.send_replace(observation::SessionDetails::read(&session));
+    }
     if let Some(radios) = &radios {
         radios.send_replace(session.radios().clone());
     }
@@ -403,7 +431,7 @@ pub async fn run_observed(
     let (sender, receiver) = mpsc::channel(32);
     tokio::select! {
         biased;
-        result = pump(session, sender, inputs.1, radios) => { result?; Err(VoiceError::ControlDisconnected.into()) },
+        result = pump(session, sender, inputs.1, radios, details) => { result?; Err(VoiceError::ControlDisconnected.into()) },
         result = worker.drive(inputs.0, receiver, inputs.2) => result,
     }
 }
