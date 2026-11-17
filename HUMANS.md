@@ -35,7 +35,9 @@ A successful build does not establish background operation, acceptable latency, 
 - docs/PROTOCOL records the SRS baseline and compatibility decisions.
 - docs/TESTING defines evidence and platform acceptance.
 
-CI is configured for Windows, Linux, and macOS host checks. It does not build an Android/iOS app yet. Branch protection settings and Actions results are visible on GitHub; documentation is not proof that a protection is enabled.
+CI runs Windows, Linux, and macOS host checks. It does not build an Android/iOS app yet. The initial scaffold passed all three hosts; the run is linked in TASKS.md.
+
+`main` requires a pull request and all three host CI checks on an up-to-date branch. The rules apply to administrators, and force pushes and branch deletion are disabled. Squash merging is enabled. No second-person approval is required by GitHub at bootstrap; self-review does not count as independent review. Recheck the live GitHub settings and checks when merging, because repository configuration can change.
 
 ## Public contributions
 
