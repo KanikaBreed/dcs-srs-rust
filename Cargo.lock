@@ -4469,6 +4469,7 @@ dependencies = [
  "ashpd",
  "futures-util",
  "sdl3",
+ "sdl3-sys",
  "serde",
  "serde_json",
  "tokio",

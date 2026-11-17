@@ -10,6 +10,9 @@ description = "Owned desktop PTT input adapters with bounded freshness"
 [dependencies]
 tokio = { version = "1.54.1", features = ["rt", "macros", "sync", "time", "net"] }
 sdl3 = { version = "=0.22.1", features = ["build-from-source-static"] }
+# Configure the bundled C library too: Slint owns windows, CPAL owns audio.
+# Positive subsystem features override no-default-subsystems in sdl3-sys.
+sdl3-sys = { version = "=0.7.3", features = ["no-default-subsystems", "sdl-joystick", "sdl-hidapi", "sdl-unix-console-build"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ashpd = { version = "=0.13.13", default-features = false, features = ["tokio", "global_shortcuts"] }
