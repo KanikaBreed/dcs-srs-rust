@@ -9,7 +9,7 @@ python3 scripts/check.py --docs-only
 
 Use `py -3` on Windows. Full checks validate relative Markdown file targets, workspace and fuzz-target formatting, `cargo clippy --workspace --all-targets --locked -- -D warnings`, and `cargo test --workspace --locked`.
 
-The link check validates file existence only, not remote URLs or heading anchors. The protocol suite tests upstream UDP vectors, control JSON, enum values, unknown fields, TCP fragmentation/coalescing, size limits, invalid input, and single-byte packet mutations. CI runs it on Linux, Windows, and macOS hosts. Linux also compiles fuzz targets and checks fixtures with unchanged upstream C# sources. CI does not test physical audio hardware or build mobile apps yet.
+The link check validates file existence only, not remote URLs or heading anchors. The protocol suite tests upstream UDP vectors, control JSON, enum values, unknown fields, TCP fragmentation/coalescing, size limits, invalid input, and single-byte packet mutations. The session suite uses loopback TCP to test login, radio updates, metadata retention, revocation, cancellation, deadlines, and cumulative resource limits. CI runs these checks on Linux, Windows, and macOS hosts. Linux also compiles fuzz targets, checks fixtures with unchanged upstream C# sources, and runs isolated stock-server control tests. CI does not test physical audio hardware or build mobile apps yet.
 
 For independent local verification, follow the [fixture guide](../crates/srs-protocol/tests/fixtures/README.md). It requires .NET SDK 10 and a clean pinned reference. The Rust round-trip example and C# oracle open no sockets or audio devices. For fuzzing, see [the target instructions](../fuzz/README.md).
 
@@ -18,7 +18,7 @@ For independent local verification, follow the [fixture guide](../crates/srs-pro
 | Layer | Required evidence |
 |---|---|
 | Core rules | Radio eligibility, state transitions, explicit PTT release, server settings, invalid input |
-| Protocol (partly implemented) | Independent vectors, malformed data, framing, and field preservation are tested; live version negotiation remains pending |
+| Protocol/control (implemented) | Independent vectors, framing, bounded session state, and control/version/EAM behavior against stock SRS 2.4.1.0; broad release compatibility remains pending |
 | Audio simulation | Generated signals, loss/reorder/duplication/jitter, bounded buffering, sample-rate conversion, clipping |
 | Stock SRS interoperability | Both voice directions and server policy with pinned unmodified reference versions |
 | Native desktop | Device selection/hotplug, keyboard and HID PTT, X11/Wayland, sleep/resume, CPU contention |
@@ -26,9 +26,11 @@ For independent local verification, follow the [fixture guide](../crates/srs-pro
 | iOS device | Audio session activation, foreground/background distinction, system PTT, wake-up path, first-audio buffering |
 | UI | Touch and keyboard, screen reader, text scaling, visible TX/RX, error recovery, narrow and tablet layouts |
 
-## Offline harness design (planned)
+## Harnesses
 
-Implement deterministic fake clocks, mock transports, synthetic audio sources, packet fixtures, and loopback reference servers. These are planned facilities, not existing CLI flags. Keep test configurations isolated from user profiles. Bind local test services to loopback by default and use distinct ports for parallel sessions.
+Session tests use loopback sockets on ephemeral ports, scripted peers, and Tokio virtual time for refresh scheduling. The stock-server runner uses a fresh private Linux network namespace and temporary synthetic configuration. Run `python3 scripts/test_stock_server.py`; [SESSION.md](SESSION.md) records the pinned release hash, prerequisites, exact checks, and limits. Both enabled and disabled EAM are tested. This runner downloads a server binary and opens isolated local sockets, but uses no audio devices.
+
+Synthetic audio sources and network impairment harnesses remain planned. Keep test configurations isolated from user profiles. Bind local test services to loopback by default and use distinct ports for parallel sessions.
 
 Use a task-specific window title for future automated UI demos and make automation visibly identifiable. Do not copy Aurora environment variable names or document nonexistent commands. Add runnable commands here when the harness lands.
 

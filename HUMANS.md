@@ -4,7 +4,7 @@ The initial product is an SRS-compatible TOC radio console. Read [scope](docs/SC
 
 ## Getting started
 
-Clone the repository and install Rust through rustup, your host's native build tools, and Python 3.11+. Run `python3 scripts/check.py`, or `py -3 scripts/check.py` on Windows. The workspace includes offline protocol code/tests, with no native audio dependencies and no radio app to launch. Optional C# fixture verification requires .NET SDK 10 and the pinned reference checkout; normal Rust tests do not.
+Clone the repository and install Rust through rustup, your host's native build tools, and Python 3.11+. Run `python3 scripts/check.py`, or `py -3 scripts/check.py` on Windows. The workspace includes protocol and TCP/EAM session libraries, with loopback tests and no native audio dependencies. There is no radio UI to launch. Optional C# fixture verification requires .NET SDK 10 and the pinned reference checkout. The [stock-server test](docs/SESSION.md) requires Linux network namespaces; normal Rust tests do not.
 
 For implementation work, fetch the latest branch and create an isolated task worktree:
 
@@ -35,7 +35,7 @@ A successful build does not establish background operation, acceptable latency, 
 - docs/PROTOCOL records the SRS baseline and compatibility decisions.
 - docs/TESTING defines evidence and platform acceptance.
 
-CI runs Windows, Linux, and macOS host checks. Linux also compiles fuzz targets and verifies Rust-encoded fixtures with the original C# code. It does not build an Android/iOS app yet. The initial scaffold validation remains linked in TASKS.md; current runs are on GitHub.
+CI runs Windows, Linux, and macOS host checks. Linux also compiles fuzz targets, verifies Rust-encoded fixtures with the original C# code, and tests control sessions against the official SRS server in a private network namespace. It does not build an Android/iOS app yet. The initial scaffold validation remains linked in TASKS.md; current runs are on GitHub.
 
 `main` requires a pull request and all three host CI checks on an up-to-date branch. The rules apply to administrators, and force pushes and branch deletion are disabled. Squash merging is enabled. No second-person approval is required by GitHub at bootstrap; self-review does not count as independent review. Recheck the live GitHub settings and checks when merging, because repository configuration can change.
 
