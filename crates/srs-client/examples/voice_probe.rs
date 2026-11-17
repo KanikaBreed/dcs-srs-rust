@@ -1,7 +1,8 @@
 //! Generated audio only. Invoked by the isolated stock-server runner.
-use srs_audio::{Decoder, Encoder, INPUT_RATE, INPUT_SAMPLES, MAX_OPUS_BYTES, OUTPUT_SAMPLES};
+use srs_audio::{Encoder, INPUT_RATE, INPUT_SAMPLES, MAX_OPUS_BYTES, OUTPUT_SAMPLES};
 use srs_client::{
     Identity, Options, Radio, Session, disabled_radios,
+    receive::{Playout, QueueOutcome},
     voice::{VoiceConnection, VoiceError, VoiceEvent},
 };
 use srs_protocol::voice::{ClientId, Modulation};
@@ -65,13 +66,34 @@ async fn next_voice(
         }
     }
 }
+async fn next_playout(
+    voice: &mut VoiceConnection,
+) -> Result<(Playout, [i16; OUTPUT_SAMPLES], f64), Box<dyn Error>> {
+    loop {
+        let mut pcm = [0; OUTPUT_SAMPLES];
+        let before = Instant::now();
+        if let Some(frame) = voice.poll_audio(&mut pcm)? {
+            return Ok((frame, pcm, before.elapsed().as_secs_f64() * 1e6));
+        }
+        let deadline = voice
+            .audio_deadline()?
+            .unwrap_or_else(|| Instant::now() + Duration::from_secs(3));
+        tokio::select! {
+            biased;
+            _ = sleep_until(deadline) => {},
+            event = voice.next_event() => if let VoiceEvent::Voice(packet) = event? {
+                check(matches!(voice.buffer_voice(&packet)?, QueueOutcome::Queued | QueueOutcome::Resynchronized), "voice rejected by receive policy")?;
+            }
+        }
+    }
+}
+
 async fn burst(
     sender: &mut VoiceConnection,
     receiver: &mut VoiceConnection,
     direction: &str,
 ) -> Result<(), Box<dyn Error>> {
     let mut encoder = Encoder::new()?;
-    let mut decoder = Decoder::new()?;
     sender.press_ptt(1)?;
     let send = async {
         let start = Instant::now();
@@ -100,7 +122,12 @@ async fn burst(
         let mut decode_us = 0.0;
         let mut sequence = None;
         for index in 0..FRAMES {
-            let frame = timeout(Duration::from_secs(3), next_voice(receiver)).await??;
+            let (frame, pcm, worker_us) =
+                timeout(Duration::from_secs(3), next_playout(receiver)).await??;
+            check(
+                frame.kind == srs_audio::jitter::FrameKind::Decoded,
+                "unexpected concealment in loopback burst",
+            )?;
             if let Some(previous) = sequence {
                 check(
                     frame.packet_number == previous + 1,
@@ -108,10 +135,7 @@ async fn burst(
                 )?;
             }
             sequence = Some(frame.packet_number);
-            let mut pcm = [0; OUTPUT_SAMPLES];
-            let decode_start = Instant::now();
-            decoder.decode(&frame.audio, &mut pcm)?;
-            decode_us += decode_start.elapsed().as_secs_f64() * 1e6;
+            decode_us += worker_us;
             if index > 0 {
                 check(
                     pcm.iter().map(|x| (*x as f64).powi(2)).sum::<f64>() / OUTPUT_SAMPLES as f64
@@ -138,7 +162,7 @@ async fn burst(
         .sum::<f64>()
         / (FRAMES - 1) as f64;
     println!(
-        "{{\"direction\":\"{direction}\",\"frames\":{FRAMES},\"missing\":0,\"encode_start_to_decode_p50_ms\":{:.3},\"encode_start_to_decode_p95_ms\":{:.3},\"max_ms\":{:.3},\"mean_abs_spacing_error_ms\":{spacing_error:.3},\"mean_encode_us\":{:.1},\"mean_decode_us\":{:.1}}}",
+        "{{\"direction\":\"{direction}\",\"frames\":{FRAMES},\"missing\":0,\"encode_start_to_playout_p50_ms\":{:.3},\"encode_start_to_playout_p95_ms\":{:.3},\"max_ms\":{:.3},\"mean_abs_spacing_error_ms\":{spacing_error:.3},\"mean_encode_us\":{:.1},\"mean_playout_worker_us\":{:.1}}}",
         latency[FRAMES / 2],
         latency[FRAMES * 95 / 100],
         latency[FRAMES - 1],
@@ -187,7 +211,42 @@ async fn main() -> Result<(), Box<dyn Error>> {
     tune(&mut rx, 305_000_000.0, 251_000_000.0).await?;
     observed(&mut tx, RX, 305_000_000.0, 251_000_000.0).await?;
     tx_voice.send_frame(&bytes[..len]).await?;
-    timeout(Duration::from_secs(3), next_voice(&mut rx_voice)).await??;
+    let (guard, _, _) = timeout(Duration::from_secs(3), next_playout(&mut rx_voice)).await??;
+    check(
+        guard.secondary,
+        "guard packet did not reach secondary playout",
+    )?;
+    // SRS forwards wrong-key packets: prove local eligibility rejects them.
+    for (session, key) in [(&mut tx, 7), (&mut rx, 8)] {
+        let mut radios = disabled_radios();
+        radios[1] = Radio::tuned(251_000_000.0, Modulation::AM);
+        radios[1].encryption_key = Some(key);
+        session.set_radios(radios).await?;
+    }
+    for (session, peer, key) in [(&mut tx, RX, 8), (&mut rx, TX, 7)] {
+        timeout(Duration::from_secs(3), async {
+            while session
+                .clients()
+                .get(peer)
+                .is_none_or(|p| p["RadioInfo"]["radios"][1]["encKey"] != key)
+            {
+                session.next_event().await?;
+            }
+            Ok::<_, srs_client::Error>(())
+        })
+        .await??;
+    }
+    tx_voice.press_ptt(1)?;
+    tx_voice.send_frame(&bytes[..len]).await?;
+    let wrong_key = timeout(Duration::from_secs(3), next_voice(&mut rx_voice)).await??;
+    check(
+        rx_voice.buffer_voice(&wrong_key)? == QueueOutcome::Ineligible,
+        "wrong key reached clear-audio queue",
+    )?;
+    check(
+        rx_voice.audio_deadline()?.is_none(),
+        "retune retained guard backlog",
+    )?;
     tx.leave_eam().await?;
     check(!tx_voice.is_transmitting(), "EAM leave retained PTT")?;
     check(
@@ -197,7 +256,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     rx.close();
     check(!rx_voice.is_ready(), "TCP close retained UDP readiness")?;
     println!(
-        "PASS: generated Opus both directions, coalition/frequency isolation, guard routing, PTT release, TCP-to-UDP invalidation; no devices opened"
+        "PASS: generated Opus both directions, coalition/frequency isolation, guard playout, wrong-key filtering, PTT release, TCP-to-UDP invalidation; no devices opened"
     );
     Ok(())
 }

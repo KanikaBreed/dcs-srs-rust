@@ -4,7 +4,7 @@ A Rust client project for [DCS SimpleRadio Standalone](https://github.com/ciribo
 
 The first product is a standalone **TOC (tactical operations center) radio console**: monitor several radio nets and transmit with push-to-talk through an existing SRS server, without running DCS on the operator's device.
 
-**Status: generated voice transport.** Rust connects to SRS, authenticates coalition access, exchanges radio state, and sends/receives generated Opus audio through the unmodified SRS 2.4.1.0 server. UDP keepalives and session-bound PTT gating are implemented. Original C# codec wrappers verify Opus in both directions. Receive eligibility/jitter buffering, microphone/speaker I/O, hardware PTT, UI, and mobile applications remain pending; this is not yet an installable voice app.
+**Status: generated voice and receive pipeline.** Rust connects to SRS, authenticates coalition access, exchanges radio state, and sends/receives generated Opus audio through the unmodified SRS 2.4.1.0 server. UDP keepalives and session-bound PTT gating are implemented. Original C# codec wrappers verify Opus in both directions. Radio/key eligibility, bounded packet ordering, jitter buffering, and loss concealment are implemented and tested with generated audio. Microphone/speaker I/O, hardware PTT, UI, and mobile applications remain pending; this is not yet an installable voice app.
 
 ## Product direction
 
@@ -61,7 +61,7 @@ It downloads the pinned official server to `.scratch`, checks its SHA-256, build
 - [Architecture](ARCHITECTURE.md)
 - [Current tasks](TASKS.md)
 - [Agent instructions](AGENTS.md) and [human contributor guide](HUMANS.md)
-- [Protocol compatibility](docs/PROTOCOL.md)
+- [Protocol compatibility](docs/PROTOCOL.md) and [receive pipeline](docs/RECEIVE.md)
 - [Testing and acceptance](docs/TESTING.md)
 - [Platform work](docs/PLATFORMS.md)
 - [Interface design](docs/BRANDING.md) and [translation policy](docs/TRANSLATING.md)

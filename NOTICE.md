@@ -14,6 +14,8 @@ Source revision: `d01f540ce5e363e9ac841775c8f7e2253138cd81`. Relevant source fil
 
 `crates/srs-client/src/voice.rs` derives heartbeat/registration behavior from `Common/Network/Client/UDPVoiceHandler.cs`; the generated-voice probe checks `Common/Network/Server/UDPVoiceRouter.cs` behavior. Codec settings derive from `Common/Constants.cs` and desktop `AudioManager.cs`. `tools/voice-reference` links the three original `Common/Audio/Opus` API/encoder/decoder files unchanged at the same pinned revision; its native-library resolver and generated test driver are local additions.
 
+`crates/srs-core/src/lib.rs` translates receive matching from `Common/Models/Player/PlayerRadioInfoBase.cs`, `RadioBase.cs`, and desktop `DCSPlayerRadioInfo.cs` at the same pinned GPLv3 revision, copyright Ciribob and contributors. `srs-client/src/receive.rs` translates standalone policy from desktop `UDPClientAudioProcessor.cs` and `Common/Network/Singletons/SyncedServerSettings.cs`. The independent matcher corpus is produced by the unchanged upstream base model. Rust corrects the inherited guard-key flag described in `docs/RECEIVE.md`. The Rust bounded encoded-frame jitter scheduler is new code; upstream `ClientAudioProvider.cs`, `AudioProvider.cs`, and `JitterBufferProviderInterface.cs` were reviewed for timing/decoder context, but their adaptive Speex implementation is not copied.
+
 For future source-derived additions, retain original copyright/license notices and record exact files/revisions and modifications here and near the code. Review separately licensed assets before copying them.
 
 ## Aurora workflow adaptation

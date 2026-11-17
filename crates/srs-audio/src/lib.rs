@@ -5,6 +5,8 @@
 
 use std::fmt;
 
+pub mod jitter;
+
 pub const INPUT_RATE: u32 = 16_000;
 pub const OUTPUT_RATE: u32 = 48_000;
 pub const FRAME_MS: usize = 40;
@@ -17,6 +19,9 @@ pub enum CodecError {
     InvalidPacket,
     WrongDuration,
     CodecFailure,
+    ClockReversed,
+    ClockOverflow,
+    BufferFull,
 }
 impl fmt::Display for CodecError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -24,6 +29,9 @@ impl fmt::Display for CodecError {
             Self::InvalidPacket => "invalid or oversized Opus packet",
             Self::WrongDuration => "SRS audio requires a 40 ms Opus packet",
             Self::CodecFailure => "Opus operation failed",
+            Self::ClockReversed => "playout clock moved backwards",
+            Self::ClockOverflow => "playout clock exhausted",
+            Self::BufferFull => "encoded frame buffer is full",
         })
     }
 }
@@ -66,15 +74,7 @@ impl Decoder {
         packet: &[u8],
         output: &mut [i16; OUTPUT_SAMPLES],
     ) -> Result<(), CodecError> {
-        if packet.is_empty() || packet.len() > MAX_OPUS_BYTES {
-            return Err(CodecError::InvalidPacket);
-        }
-        if opus::packet::get_nb_samples(packet, OUTPUT_RATE)
-            .map_err(|_| CodecError::InvalidPacket)?
-            != OUTPUT_SAMPLES
-        {
-            return Err(CodecError::WrongDuration);
-        }
+        validate_packet(packet)?;
         let samples = self
             .0
             .decode(packet, output, false)
@@ -85,7 +85,7 @@ impl Decoder {
         Ok(())
     }
     /// Explicit packet-loss concealment; missing network input never implicitly
-    /// becomes silence or PLC. A future jitter buffer must choose this operation.
+    /// becomes silence or PLC. The jitter buffer chooses this operation.
     pub fn conceal(&mut self, output: &mut [i16; OUTPUT_SAMPLES]) -> Result<(), CodecError> {
         self.0
             .decode(&[], output, false)
@@ -99,4 +99,18 @@ impl Decoder {
 
 pub fn codec_version() -> &'static str {
     opus::version()
+}
+
+/// Cheap framing/duration check before allocating a decoder or queue entry.
+/// Decoding can still fail for a corrupt payload.
+pub fn validate_packet(packet: &[u8]) -> Result<(), CodecError> {
+    if packet.is_empty() || packet.len() > MAX_OPUS_BYTES {
+        return Err(CodecError::InvalidPacket);
+    }
+    if opus::packet::get_nb_samples(packet, OUTPUT_RATE).map_err(|_| CodecError::InvalidPacket)?
+        != OUTPUT_SAMPLES
+    {
+        return Err(CodecError::WrongDuration);
+    }
+    Ok(())
 }

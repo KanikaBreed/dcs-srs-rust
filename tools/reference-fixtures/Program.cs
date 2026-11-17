@@ -65,6 +65,8 @@ Message("version-mismatch.jsonl", new NetworkMessage { MsgType = NetworkMessage.
 fixtures["message-types.json"] = JsonSerializer.SerializeToUtf8Bytes(Enum.GetValues<NetworkMessage.MessageType>().ToDictionary(x => x.ToString(), x => (int)x));
 fixtures["modulations.json"] = JsonSerializer.SerializeToUtf8Bytes(Enum.GetValues<Modulation>().ToDictionary(x => x.ToString(), x => (int)x));
 
+fixtures["radio-matching.json"] = RadioFixtures.Create();
+
 var directory = Path.GetFullPath(args[1]);
 if (args[0] == "--write") Directory.CreateDirectory(directory);
 foreach (var (name, expected) in fixtures)

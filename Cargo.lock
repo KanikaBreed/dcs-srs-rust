@@ -176,6 +176,7 @@ version = "0.1.0"
 dependencies = [
  "serde_json",
  "srs-audio",
+ "srs-core",
  "srs-protocol",
  "tokio",
 ]
@@ -183,6 +184,10 @@ dependencies = [
 [[package]]
 name = "srs-core"
 version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "srs-protocol",
+]
 
 [[package]]
 name = "srs-protocol"

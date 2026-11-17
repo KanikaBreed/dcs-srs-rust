@@ -1,7 +1,7 @@
 //! UDP identity/heartbeat behavior follows Common/Network/Client/UDPVoiceHandler.cs,
 //! Ciribob and contributors (GPLv3), upstream d01f540c. Adds bounded datagrams,
 //! matched keepalive identities, session-bound PTT, and explicit timeout errors.
-//! No device I/O, playback, receive-radio eligibility, jitter buffer, or relay.
+//! Receive eligibility and bounded worker playout live in the receive module.
 
 #[cfg(test)]
 #[path = "voice_tests.rs"]
@@ -32,15 +32,17 @@ pub(crate) struct Channel {
     pub unit_id: u32,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct Authorization {
     pub revision: u64,
+    pub receive: Option<std::sync::Arc<crate::receive::Policy>>,
     pub channels: [Option<Channel>; 11],
 }
 impl Authorization {
     pub fn disabled() -> Self {
         Self {
             revision: 0,
+            receive: None,
             channels: [None; 11],
         }
     }
@@ -57,6 +59,7 @@ pub enum VoiceError {
     InvalidAudio,
     SequenceExhausted,
     SendTimeout,
+    Codec(srs_audio::CodecError),
 }
 impl fmt::Display for VoiceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -69,6 +72,7 @@ impl fmt::Display for VoiceError {
             Self::InvalidRadio => "radio cannot transmit",
             Self::InvalidAudio => "empty or oversized encoded audio",
             Self::SequenceExhausted => "voice sequence exhausted; open a new voice connection",
+            Self::Codec(_) => "receive codec or playout failed",
             Self::SendTimeout => "voice frame expired before UDP could send it",
         })
     }
@@ -81,8 +85,11 @@ impl From<std::io::Error> for VoiceError {
 }
 
 /// Encoded network data, not permission to play it. The receiver still needs
-/// radio/key/coalition policy, ordering, jitter buffering, and per-sender decoding.
+/// `buffer_voice` for local radio/key checks, ordering and bounded decoding.
+/// Coalition routing is enforced by the connected SRS server.
 pub struct ReceivedVoice {
+    pub(crate) generation: u64,
+    pub(crate) receiver: ClientId,
     pub audio: Vec<u8>,
     pub frequencies: Vec<Frequency>,
     pub unit_id: u32,
@@ -103,11 +110,12 @@ pub enum VoiceEvent {
 }
 
 pub struct VoiceConnection {
+    pub(crate) receive: crate::receive::ReceiveState,
     socket: Option<UdpSocket>,
-    id: ClientId,
-    authorization: watch::Receiver<Authorization>,
+    pub(crate) id: ClientId,
+    pub(crate) authorization: watch::Receiver<Authorization>,
     control_alive: watch::Receiver<bool>,
-    ptt: Option<(usize, u64)>,
+    pub(crate) ptt: Option<(usize, u64)>,
     sequence: u64,
     last_received: Instant,
     ping_at: Instant,
@@ -136,6 +144,7 @@ impl VoiceConnection {
         let socket = UdpSocket::bind(SocketAddr::new(local, 0)).await?;
         socket.connect(address).await?;
         let mut connection = Self {
+            receive: crate::receive::ReceiveState::default(),
             socket: Some(socket),
             id,
             authorization,
@@ -162,7 +171,7 @@ impl VoiceConnection {
         }
     }
 
-    fn check(&self) -> Result<(), VoiceError> {
+    pub(crate) fn check(&self) -> Result<(), VoiceError> {
         if !*self.control_alive.borrow()
             || self.control_alive.has_changed().is_err()
             || self.authorization.has_changed().is_err()
@@ -189,7 +198,7 @@ impl VoiceConnection {
             })
     }
     pub fn press_ptt(&mut self, radio: usize) -> Result<(), VoiceError> {
-        self.ptt = None;
+        self.release_ptt();
         self.check()?;
         let auth = self.authorization.borrow_and_update();
         if radio >= auth.channels.len() || auth.channels[radio].is_none() {
@@ -200,10 +209,22 @@ impl VoiceConnection {
     }
     pub fn release_ptt(&mut self) {
         self.ptt = None;
+        // Observe transitions even when press and release both happen between
+        // playout polls; old audio must not survive a half-duplex TX interval.
+        if self
+            .authorization
+            .borrow()
+            .receive
+            .as_ref()
+            .is_some_and(|p| p.irl_tx)
+        {
+            self.receive.clear();
+        }
     }
     pub fn close(&mut self) {
         self.release_ptt();
         self.socket = None;
+        self.receive.clear();
     }
 
     /// The caller supplies one current encoded frame. No outgoing queue or
@@ -313,6 +334,8 @@ impl VoiceConnection {
                         && !packet.frequencies.is_empty() =>
                 {
                     VoiceEvent::Voice(ReceivedVoice {
+                        generation: self.authorization.borrow().revision,
+                        receiver: self.id,
                         audio: packet.audio.to_vec(),
                         frequencies: packet.frequencies,
                         unit_id: packet.unit_id,
