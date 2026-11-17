@@ -688,3 +688,25 @@ async fn stereo_worker_routes_and_flushes_partial_output_and_mono_keeps_right_ra
         h.stop().await;
     }
 }
+
+#[tokio::test]
+async fn worker_suspension_stops_audio_even_if_input_renews_on_resume() {
+    let mut h = Harness::new(false).await;
+    h.press().await;
+    h.feed(1).await;
+    // Suspend this owned runtime only. No system sleep or shared process signal.
+    std::thread::sleep(Duration::from_millis(350));
+    let _ = h.owner.as_mut().unwrap().renew();
+    assert!(
+        timeout(Duration::from_secs(3), &mut h.task)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_err()
+    );
+    assert!(h.input_signal.is_stopped() && h.output_signal.is_stopped());
+    assert_eq!(h.status.borrow().phase, Phase::Stopped);
+    let mut pcm = [1f32; 480];
+    h.output.process(&mut pcm, Instant::now().into_std());
+    assert!(pcm.iter().all(|sample| *sample == 0.0));
+}

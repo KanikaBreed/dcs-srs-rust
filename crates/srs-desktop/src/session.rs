@@ -218,6 +218,7 @@ fn session_problem(error: srs_toc::Error) -> Problem {
         srs_toc::Error::Voice(
             VoiceError::Io(_) | VoiceError::Timeout | VoiceError::ControlDisconnected,
         ) => Problem::Network,
+        srs_toc::Error::Interrupted => Problem::Device,
         srs_toc::Error::Device(_) => Problem::Device,
         srs_toc::Error::Control(
             srs_client::Error::EamDisabled
@@ -518,6 +519,10 @@ mod tests {
     }
     #[test]
     fn device_policy_and_protocol_errors_are_terminal() {
+        assert_eq!(
+            session_problem(srs_toc::Error::Interrupted),
+            Problem::Device
+        );
         assert_eq!(
             session_problem(srs_toc::Error::Device(srs_device::Error::Stopped)),
             Problem::Device

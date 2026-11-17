@@ -29,6 +29,7 @@ struct Shared {
     lease_ms: AtomicU64,
     last_callback_ms: AtomicU64,
     dropped: AtomicU64,
+    invalidated: AtomicU64,
     underruns: AtomicU64,
 }
 /// Terminal signal, usable by native error callbacks or a platform interruption.
@@ -45,6 +46,7 @@ impl StopSignal {
     pub fn statistics(&self) -> Statistics {
         Statistics {
             dropped: self.0.dropped.load(Ordering::Relaxed),
+            invalidated: self.0.invalidated.load(Ordering::Relaxed),
             underruns: self.0.underruns.load(Ordering::Relaxed),
             stopped: self.is_stopped(),
         }
@@ -53,6 +55,8 @@ impl StopSignal {
 #[derive(Clone, Copy, Debug)]
 pub struct Statistics {
     pub dropped: u64,
+    /// Playback frames discarded by an explicit flush (a subset of dropped).
+    pub invalidated: u64,
     pub underruns: u64,
     pub stopped: bool,
 }
@@ -501,6 +505,13 @@ impl PlaybackCallback {
                         // its clock; this is fresh audio, not a clock failure.
                         || now.saturating_duration_since(f.at) >= PLAYBACK_MAX_AGE
                 }) {
+                    if self
+                        .current
+                        .as_ref()
+                        .is_some_and(|f| f.generation != generation)
+                    {
+                        self.shared.invalidated.fetch_add(1, Ordering::Relaxed);
+                    }
                     self.current = None;
                     self.shared.dropped.fetch_add(1, Ordering::Relaxed);
                 }

@@ -29,7 +29,12 @@ use std::{
 
 struct App {
     handle: Option<Handle>,
+    diagnostic: Option<srs_device::diagnostic::Probe>,
     ptt: UiInput,
+    background: Option<srs_input::Worker>,
+    background_revision: u64,
+    joysticks: Vec<srs_input::Device>,
+    wanted_joystick: String,
     radios: [Radio; RADIO_COUNT],
     inputs: Vec<DeviceInfo>,
     outputs: Vec<DeviceInfo>,
@@ -144,6 +149,198 @@ fn names(values: impl Iterator<Item = String>) -> ModelRc<SharedString> {
     .into()
 }
 impl App {
+    fn stop_diagnostic(&mut self) {
+        if let Some(probe) = &mut self.diagnostic {
+            probe.cancel();
+        }
+    }
+    fn diagnostic_action(&mut self, ui: &MainWindow, action: i32) {
+        self.invalidate(ui);
+        if action == 0 {
+            self.stop_diagnostic();
+            return;
+        }
+        if self.handle.is_some() || self.discovering || self.diagnostic.is_some() {
+            return;
+        }
+        use srs_device::diagnostic::{Mode, Probe};
+        let mode = match action {
+            1 => Mode::Capture,
+            2 => Mode::Loopback,
+            3 => Mode::Stereo,
+            _ => return,
+        };
+        let selections = device_id(&self.inputs, ui.get_input_index()).and_then(|input| {
+            device_id(&self.outputs, ui.get_output_index()).map(|output| (input, output))
+        });
+        let Ok((input, output)) = selections else {
+            ui.set_diagnostic_state(5);
+            return;
+        };
+        match Probe::start(mode, input, output) {
+            Ok(probe) => {
+                self.diagnostic = Some(probe);
+                ui.set_diagnostic_active(true);
+                ui.set_diagnostic_mode(action);
+                ui.set_diagnostic_state(0);
+                ui.set_diagnostic_clipped("0".into());
+                ui.set_diagnostic_peak(0.);
+            }
+            Err(_) => ui.set_diagnostic_state(5),
+        }
+    }
+    fn poll_diagnostic(&mut self, ui: &MainWindow) {
+        if let Some(probe) = &self.diagnostic {
+            probe.renew();
+            let snapshot = probe.snapshot();
+            ui.set_diagnostic_state(snapshot.state as i32);
+            ui.set_diagnostic_peak(snapshot.peak_percent as f32);
+            ui.set_diagnostic_clipped(snapshot.clipped.to_string().into());
+            ui.set_diagnostic_seconds(snapshot.elapsed as i32);
+            ui.set_diagnostic_channel(snapshot.channel as i32);
+            ui.set_diagnostic_mono(snapshot.mono);
+            if probe.finished() {
+                self.diagnostic.take();
+                ui.set_diagnostic_active(false);
+            }
+        }
+    }
+    fn controls(&self, ui: &MainWindow) -> profiles::Preferences {
+        profiles::Preferences {
+            ptt_key: self.ptt_key,
+            background_mode: ui.get_background_mode().clamp(0, 2) as u8,
+            background_key: (ui.get_background_key().clamp(0, 11) + 1) as u8,
+            background_modifiers: u8::from(ui.get_background_shift())
+                | (u8::from(ui.get_background_ctrl()) << 1)
+                | (u8::from(ui.get_background_alt()) << 2)
+                | (u8::from(ui.get_background_super()) << 3),
+            joystick_guid: self
+                .joysticks
+                .get(ui.get_joystick_index() as usize)
+                .map_or_else(|| self.wanted_joystick.clone(), |d| d.guid.clone()),
+            joystick_button: (ui.get_joystick_button().clamp(1, 128) - 1) as u8,
+        }
+    }
+    fn stop_background(&mut self, ui: &MainWindow) {
+        self.invalidate(ui);
+        ui.set_background_enabled(false);
+        ui.set_background_trigger("".into());
+        if let Some(worker) = &mut self.background
+            && let Ok(revision) = worker.configure(srs_input::Mode::Off)
+        {
+            self.background_revision = revision;
+        }
+        ui.set_background_state(0);
+    }
+    fn background_action(&mut self, ui: &MainWindow, action: i32) {
+        let was_enabled = ui.get_background_enabled();
+        self.stop_background(ui);
+        ui.set_controls_saved(self.controls(ui) == self.profiles.preferences);
+        let controls = self.controls(ui);
+        let mode = match action {
+            0 => return,
+            1 if was_enabled => return,
+            1 if controls.background_mode == 1 => srs_input::Mode::Keyboard {
+                description: ui.global::<Strings>().get_portal_ptt().to_string(),
+                key: controls.background_key,
+                modifiers: controls.background_modifiers,
+            },
+            1 if controls.background_mode == 2 => {
+                let Some(device) = self.joysticks.get(ui.get_joystick_index() as usize) else {
+                    ui.set_background_state(6);
+                    return;
+                };
+                if u32::from(controls.joystick_button) >= device.buttons {
+                    ui.set_background_state(6);
+                    return;
+                }
+                srs_input::Mode::Joystick {
+                    instance: device.instance,
+                    button: u32::from(controls.joystick_button),
+                }
+            }
+            2 => srs_input::Mode::ScanJoysticks,
+            _ => return,
+        };
+        let Some(worker) = &mut self.background else {
+            ui.set_background_state(3);
+            return;
+        };
+        match worker.configure(mode) {
+            Ok(revision) => {
+                self.background_revision = revision;
+                ui.set_background_enabled(action == 1);
+                ui.set_background_state(1);
+            }
+            Err(_) => ui.set_background_state(6),
+        }
+    }
+    fn poll_background(&mut self, ui: &MainWindow) -> Option<srs_input::Snapshot> {
+        let worker = self.background.as_ref()?;
+        if worker.view.has_changed().is_err() {
+            ui.set_background_enabled(false);
+            ui.set_background_state(5);
+            return None;
+        }
+        let snapshot = worker.view.borrow().clone();
+        if snapshot.revision != self.background_revision {
+            return None;
+        }
+        if ui.get_background_enabled()
+            && snapshot.state == srs_input::State::Ready
+            && (snapshot.at.elapsed() >= srs_input::FRESHNESS
+                || !std::time::SystemTime::now()
+                    .duration_since(snapshot.wall)
+                    .is_ok_and(|age| age < srs_input::FRESHNESS))
+        {
+            self.stop_background(ui);
+            ui.set_background_state(5);
+            return None;
+        }
+        let changed = self
+            .joysticks
+            .iter()
+            .map(|d| d.instance)
+            .ne(snapshot.devices.iter().map(|d| d.instance));
+        if changed {
+            let selected = self
+                .joysticks
+                .get(ui.get_joystick_index() as usize)
+                .map(|d| d.instance);
+            let matches: Vec<_> = snapshot
+                .devices
+                .iter()
+                .enumerate()
+                .filter(|(_, d)| d.guid == self.wanted_joystick)
+                .map(|(i, _)| i)
+                .collect();
+            let index = snapshot
+                .devices
+                .iter()
+                .position(|d| Some(d.instance) == selected)
+                .or_else(|| (matches.len() == 1).then(|| matches[0]));
+            ui.set_joysticks(names(
+                snapshot
+                    .devices
+                    .iter()
+                    .map(|d| format!("{} · {}", d.name, d.instance)),
+            ));
+            ui.set_joystick_index(index.map_or(-1, |i| i as i32));
+            self.joysticks = snapshot.devices.clone();
+        }
+        ui.set_background_state(snapshot.state as i32);
+        ui.set_background_trigger(snapshot.trigger.as_str().into());
+        if matches!(
+            snapshot.state,
+            srs_input::State::Unavailable
+                | srs_input::State::Denied
+                | srs_input::State::Disconnected
+                | srs_input::State::Failed
+        ) {
+            ui.set_background_enabled(false);
+        }
+        Some(snapshot)
+    }
     fn rebind(&mut self, ui: &MainWindow, key: i32) {
         if let Ok(key) = u8::try_from(key)
             && key <= 12
@@ -151,12 +348,12 @@ impl App {
             self.invalidate(ui);
             self.ptt_key = key;
             ui.set_ptt_key(key as i32);
-            ui.set_controls_saved(self.profiles.preferences.ptt_key == key);
+            ui.set_controls_saved(self.controls(ui) == self.profiles.preferences);
         }
     }
     fn refresh_devices(&mut self, ui: &MainWindow) {
         self.invalidate(ui);
-        if self.handle.is_some() || self.discovering {
+        if self.handle.is_some() || self.discovering || self.diagnostic.is_some() {
             return;
         }
         let selected = |devices: &[DeviceInfo], index: i32, missing: &Option<String>| {
@@ -366,7 +563,7 @@ impl App {
         }
     }
     fn connect(&mut self, ui: &MainWindow) {
-        if self.handle.is_some() || self.discovering {
+        if self.handle.is_some() || self.discovering || self.diagnostic.is_some() {
             return;
         }
         self.invalidate(ui);
@@ -535,7 +732,11 @@ impl App {
     }
     fn profile_action(&mut self, ui: &MainWindow, action: i32) {
         self.invalidate(ui);
-        if self.storage_busy || self.pending.is_some() || self.discovering {
+        if self.storage_busy
+            || self.pending.is_some()
+            || self.discovering
+            || self.diagnostic.is_some()
+        {
             return;
         }
         if action == 6 {
@@ -639,7 +840,7 @@ impl App {
                 }
                 data.presets.remove(index);
             }
-            7 => data.preferences.ptt_key = self.ptt_key,
+            7 => data.preferences = self.controls(ui),
             _ => return Err(Problem::Profile),
         }
         self.store_command(ui, Command::Save(data));
@@ -660,10 +861,20 @@ impl App {
         match result {
             Ok(data) => {
                 if load_preferences {
+                    self.stop_background(ui);
                     self.rebind(ui, data.preferences.ptt_key as i32);
+                    let prefs = &data.preferences;
+                    ui.set_background_mode(i32::from(prefs.background_mode));
+                    ui.set_background_key(i32::from(prefs.background_key) - 1);
+                    ui.set_background_shift(prefs.background_modifiers & 1 != 0);
+                    ui.set_background_ctrl(prefs.background_modifiers & 2 != 0);
+                    ui.set_background_alt(prefs.background_modifiers & 4 != 0);
+                    ui.set_background_super(prefs.background_modifiers & 8 != 0);
+                    ui.set_joystick_button(i32::from(prefs.joystick_button) + 1);
+                    self.wanted_joystick = prefs.joystick_guid.clone();
                 }
                 self.profiles = data;
-                ui.set_controls_saved(self.profiles.preferences.ptt_key == self.ptt_key);
+                ui.set_controls_saved(self.controls(ui) == self.profiles.preferences);
                 ui.set_saved_servers(names(self.profiles.servers.iter().map(|s| s.name.clone())));
                 ui.set_saved_presets(names(self.profiles.presets.iter().map(|p| p.name.clone())));
                 ui.set_server_index(
@@ -692,11 +903,14 @@ impl App {
         }
     }
     fn tick(&mut self, ui: &MainWindow) {
+        self.poll_diagnostic(ui);
         self.poll_devices(ui);
         self.poll_storage(ui);
         let now = Instant::now();
         self.ptt.tick(now);
+        let background = self.poll_background(ui);
         let Some(handle) = &self.handle else {
+            self.ptt.invalidate(now);
             return;
         };
         let snapshot = handle.view.borrow().clone();
@@ -769,6 +983,20 @@ impl App {
         ui.set_rx_active(active.iter().any(|rx| *rx));
         ui.set_ready(ready);
         ui.set_editing(self.pending.is_some() || snapshot.editing);
+        if ready
+            && self.pending.is_none()
+            && !snapshot.editing
+            && self.transfer == 0
+            && ui.get_background_enabled()
+        {
+            if let Some(sample) = background.as_ref() {
+                self.ptt.background(sample, now);
+            } else {
+                self.ptt.invalidate_background();
+            }
+        } else {
+            self.ptt.invalidate_background();
+        }
         ui.set_armed(self.ptt.armed());
         ui.set_phase(if self.stopping && !finished {
             5
@@ -803,6 +1031,8 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let result = ui.run();
     timer.stop();
     // Explicitly drop/join even while the window/callback objects still exist.
+    app.borrow_mut().diagnostic.take();
+    app.borrow_mut().background.take();
     app.borrow_mut().handle.take();
     app.borrow_mut().storage.take();
     app.borrow_mut().discovery.take();
@@ -837,7 +1067,12 @@ fn setup(profile_path: Option<std::path::PathBuf>) -> Result<Application, slint:
     ui.set_storage_status(if storage.is_some() { 1 } else { 2 });
     let app = Rc::new(RefCell::new(App {
         handle: None,
+        diagnostic: None,
         ptt: UiInput::new(Instant::now()),
+        background: srs_input::Worker::spawn().ok(),
+        background_revision: 0,
+        joysticks: vec![],
+        wanted_joystick: String::new(),
         radios,
         inputs,
         outputs,
@@ -892,6 +1127,12 @@ fn setup(profile_path: Option<std::path::PathBuf>) -> Result<Application, slint:
     callback!(on_rebind, |state, window, key| {
         state.rebind(&window, key);
     });
+    callback!(on_background_action, |state, window, action| {
+        state.background_action(&window, action);
+    });
+    callback!(on_diagnostic_action, |state, window, action| {
+        state.diagnostic_action(&window, action);
+    });
     callback!(on_connect_requested, |state, window| {
         state.connect(&window);
     });
@@ -931,6 +1172,17 @@ fn setup(profile_path: Option<std::path::PathBuf>) -> Result<Application, slint:
             window.set_preset_name(preset.name.as_str().into());
         }
     });
+    callback!(on_focused_input, |state, window, kind| {
+        state.event(
+            &window,
+            2,
+            match kind {
+                0 => Input::Press,
+                1 => Input::Release,
+                _ => Input::Invalidate,
+            },
+        );
+    });
     callback!(on_pointer_input, |state, window, kind| {
         state.event(
             &window,
@@ -956,15 +1208,22 @@ fn setup(profile_path: Option<std::path::PathBuf>) -> Result<Application, slint:
                 WindowEvent::ModifiersChanged(modifiers) => {
                     state.modifiers = !modifiers.state().is_empty();
                     if state.modifiers {
-                        state.invalidate(&window);
+                        state.ptt.invalidate_foreground(Instant::now());
+                        state.publish(&window);
                     }
                 }
-                WindowEvent::Occluded(true) => state.invalidate(&window),
+                WindowEvent::Occluded(true) => {
+                    state.ptt.invalidate_foreground(Instant::now());
+                    state.publish(&window);
+                }
                 WindowEvent::KeyboardInput {
                     event,
                     is_synthetic,
                     ..
                 } if keyboard::matches(&event.logical_key, state.ptt_key) => {
+                    if window.get_background_enabled() && window.get_background_mode() == 1 {
+                        return EventResult::Propagate;
+                    }
                     if state.modifiers {
                         state.invalidate(&window);
                         return EventResult::Propagate;
@@ -988,6 +1247,8 @@ fn setup(profile_path: Option<std::path::PathBuf>) -> Result<Application, slint:
         if let Some(window) = weak.upgrade()
             && let Ok(mut state) = state.try_borrow_mut()
         {
+            state.stop_diagnostic();
+            state.stop_background(&window);
             state.disconnect(&window);
             if state.transfer != 0 {
                 window.set_storage_status(9);
@@ -1449,10 +1710,42 @@ mod tests {
                     ui.invoke_edit_routing(1);
                     assert_eq!(ui.get_routing(), 1);
                     assert!(state.borrow().ptt.intent(2, Instant::now()).radio.is_none());
-                    ui.invoke_disconnect_requested();
+                    ui.invoke_focus_talk();
+                    assert!(ui.get_talk_focused());
+                    ui.window()
+                        .dispatch_event(slint::platform::WindowEvent::KeyReleased {
+                            text: " ".into(),
+                        });
+                    ui.window()
+                        .dispatch_event(slint::platform::WindowEvent::KeyPressed {
+                            text: " ".into(),
+                        });
                     *step = 35;
                 }
-                35 if !ui.get_busy() => {
+                35 if ui.get_phase() == 3 => {
+                    ui.window()
+                        .dispatch_event(slint::platform::WindowEvent::KeyPressed {
+                            text: slint::platform::Key::Tab.into(),
+                        });
+                    assert!(!ui.get_talk_focused());
+                    assert!(state.borrow().ptt.intent(2, Instant::now()).radio.is_none());
+                    ui.invoke_disconnect_requested();
+                    *step = 36;
+                }
+                36 if !ui.get_busy() => {
+                    ui.invoke_navigate(1);
+                    ui.invoke_diagnostic_action(1);
+                    assert!(ui.get_diagnostic_active());
+                    ui.invoke_connect_requested();
+                    assert!(!ui.get_busy(), "diagnostics must exclude a session");
+                    *step = 37;
+                }
+                37 if ui.get_diagnostic_state() == 1 => {
+                    ui.invoke_diagnostic_action(0);
+                    *step = 38;
+                }
+                38 if !ui.get_diagnostic_active() => {
+                    assert_eq!(ui.get_diagnostic_state(), 3);
                     *done.borrow_mut() = true;
                     slint::quit_event_loop().unwrap();
                 }
@@ -1462,6 +1755,8 @@ mod tests {
         ui.run().unwrap();
         driver.stop();
         heartbeat.stop();
+        app.borrow_mut().diagnostic.take();
+        app.borrow_mut().background.take();
         app.borrow_mut().handle.take();
         app.borrow_mut().storage.take();
         app.borrow_mut().discovery.take();

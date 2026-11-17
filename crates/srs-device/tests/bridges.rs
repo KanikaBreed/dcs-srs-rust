@@ -443,3 +443,18 @@ fn mono_bridge_preserves_mono_gain_and_averages_explicit_stereo_input() {
     output.process(&mut pcm, start);
     assert!(pcm.iter().all(|s| *s == 0.125));
 }
+
+#[test]
+fn playback_stats_distinguish_explicit_invalidation_from_stale_loss() {
+    let now = Instant::now();
+    let (mut writer, mut callback, signal) = playback_bridge(1).unwrap();
+    writer.enqueue(&[100; OUTPUT_SAMPLES], now).unwrap();
+    writer.flush().unwrap();
+    callback.process(&mut [0f32; 480], now);
+    assert_eq!(signal.statistics().dropped, 1);
+    assert_eq!(signal.statistics().invalidated, 1);
+    writer.enqueue(&[100; OUTPUT_SAMPLES], now).unwrap();
+    callback.process(&mut [0f32; 480], now + Duration::from_millis(100));
+    assert_eq!(signal.statistics().dropped, 2);
+    assert_eq!(signal.statistics().invalidated, 1);
+}

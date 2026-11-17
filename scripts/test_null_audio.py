@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Exercise CPAL/ALSA against a process-local null PCM; no physical devices."""
+import json
 import os
 from pathlib import Path
 import re
@@ -14,6 +15,9 @@ def main():
     if sys.platform != "linux":
         raise SystemExit("The null-PCM native probe requires Linux/ALSA")
     subprocess.run(["cargo", "build", "--locked", "-p", "srs-device", "--bin", "audio_probe"], cwd=ROOT, check=True)
+    build = subprocess.run(["cargo", "test", "--locked", "-p", "srs-device", "--lib", "--no-run", "--message-format=json"], cwd=ROOT, check=True, capture_output=True, text=True)
+    artifacts = [json.loads(line) for line in build.stdout.splitlines()]
+    diagnostic = next(item["executable"] for item in artifacts if item.get("reason") == "compiler-artifact" and item.get("executable") and item["target"]["name"] == "srs_device")
     scratch = ROOT / ".scratch"
     scratch.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="srs-null-audio-", dir=scratch) as temporary:
@@ -34,6 +38,7 @@ def main():
             match = re.search(rf"{marker} frames=(\d+).*stopped=false", result.stdout)
             if match is None or int(match[1]) == 0:
                 raise SystemExit(f"{mode}: native null stream did not process frames")
+        subprocess.run([diagnostic, "diagnostic::tests::private_null_diagnostics_cancel_stall_and_deadline", "--ignored", "--exact", "--nocapture"], cwd=ROOT, env=env, check=True, timeout=30)
     print("PASS: native ALSA null input/output open, callbacks, codec frames, and clean process exit. "
           "Null PCM is unpaced; drop/underrun counts are not hardware timing measurements.")
 

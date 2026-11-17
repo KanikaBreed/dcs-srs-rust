@@ -38,3 +38,9 @@ Launch `srs-desktop.exe` on Windows or `./srs-desktop` on Linux from the output 
 The private GUI test already forces TCP loss through a loopback relay while transmitting, reconnects to stock SRS with new streams, checks retained radio/monitor settings and zero resumed TX, then verifies a fresh press works. Unit tests cover the retry budget, new identities, credential rejection and cancellation during backoff. These are software evidence, not approval for headsets, HID/global PTT, Wayland or mobile.
 
 Record source revision, binary hash, OS/session type, device/driver, SRS version, each check's result and any reproduction steps in [DEVICES.md](DEVICES.md)'s report format. Keep credentials and recordings out of public reports. Outstanding development work is mapped to the original source menus in [DESKTOP_PARITY.md](DESKTOP_PARITY.md).
+
+## New input/audio/usability checks
+
+Follow [BACKGROUND_PTT.md](BACKGROUND_PTT.md) for explicit keyboard/joystick enablement and [VOICE_VALIDATION.md](VOICE_VALIDATION.md) for offline audio tests and the two-endpoint listening matrix. Test background holds beyond five seconds, exact modifiers, physical unplug/replug, portal deny/cancel/reconfigure and release calibration. On Wayland, test the two-minute cap and session-service loss. Background holds intentionally survive ordinary focus changes.
+
+Tab to the PTT pad, tap/release Space, then hold; Tab away while held must release. Verify a screen reader announces the selected radio and can focus the pad without starting transmission. Verify Stop test is reachable on every page. Private native portal transport and KWin rendering have automated coverage; this does not replace real permission-dialog, Windows, screen-reader or physical headset validation.

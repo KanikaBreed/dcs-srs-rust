@@ -1,6 +1,6 @@
 # Platform implementation plan
 
-Application delivery below remains planned. The shared radio engine, desktop audio probe and integrated [TOC console](TOC_CONSOLE.md) build on host targets. The native Linux adapter is exercised with an isolated null PCM; physical audio and full radio application validation remain pending. See [device guide](DEVICES.md).
+The Windows/Linux graphical development preview is implemented; production platform acceptance and mobile delivery remain pending. The shared radio engine, desktop audio probe and integrated [TOC console](TOC_CONSOLE.md) build on host targets. The native Linux adapter is exercised with an isolated null PCM; physical audio and full radio application validation remain pending. See [device guide](DEVICES.md).
 
 | Target | Native responsibilities | Acceptance gate |
 |---|---|---|
@@ -11,7 +11,7 @@ Application delivery below remains planned. The shared radio engine, desktop aud
 
 ## Shared candidates
 
-[CPAL 0.18.2](https://docs.rs/cpal/0.18.2/cpal/) is now used by the desktop probe with WASAPI, ALSA, and CoreAudio. Its mobile backends are not a validated lifecycle integration. [Slint](https://slint.dev/faqs) supports those UI targets. The UI remains a candidate; neither dependency guarantees lifecycle/accessory support. Verify the chosen release and native integration in the first spike.
+[CPAL 0.18.2](https://docs.rs/cpal/0.18.2/cpal/) is now used by the desktop probe with WASAPI, ALSA, and CoreAudio. Its mobile backends are not a validated lifecycle integration. [Slint](https://slint.dev/faqs) supports those UI targets. Slint 1.19.0 is used for the desktop UI; neither dependency guarantees mobile lifecycle/accessory support. Verify the chosen release and native integration in the first spike.
 
 ## Android
 
@@ -31,7 +31,7 @@ Reference: [Creating a Push to Talk app](https://developer.apple.com/documentati
 
 ## Linux PTT
 
-Evaluate the [Global Shortcuts portal](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.GlobalShortcuts.html) on supported Wayland desktops. Validate press/release behavior and compositor support. If a device-specific input backend is needed, document its permissions and fallback. Do not silently require root or broad access to every keyboard.
+The desktop client implements the [Global Shortcuts portal](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.GlobalShortcuts.html) on supported Wayland desktops. Private adapter tests pass; real press/release behavior and compositor support need validation. See [background input](BACKGROUND_PTT.md). If a device-specific input backend is needed, document its permissions and fallback. Do not silently require root or broad access to every keyboard.
 
 ## Desktop DCS integration
 

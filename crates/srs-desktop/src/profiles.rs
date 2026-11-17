@@ -81,10 +81,22 @@ pub struct Preset {
 #[serde(deny_unknown_fields)]
 pub struct Preferences {
     pub ptt_key: u8,
+    pub background_mode: u8,
+    pub background_key: u8,
+    pub background_modifiers: u8,
+    pub joystick_guid: String,
+    pub joystick_button: u8,
 }
 impl Default for Preferences {
     fn default() -> Self {
-        Self { ptt_key: 8 }
+        Self {
+            ptt_key: 8,
+            background_mode: 0,
+            background_key: 8,
+            background_modifiers: 0,
+            joystick_guid: String::new(),
+            joystick_button: 0,
+        }
     }
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -98,7 +110,7 @@ pub struct Data {
 impl Default for Data {
     fn default() -> Self {
         Self {
-            version: 4,
+            version: 5,
             servers: vec![],
             presets: vec![],
             preferences: Preferences::default(),
@@ -228,8 +240,19 @@ impl Data {
             let mut seen = std::collections::HashSet::new();
             names.into_iter().all(|name| seen.insert(name))
         }
-        self.version == 4
+        self.version == 5
             && self.preferences.ptt_key <= 12
+            && self.preferences.background_mode <= 2
+            && (1..=12).contains(&self.preferences.background_key)
+            && self.preferences.background_modifiers < 16
+            && self.preferences.joystick_button < 128
+            && (self.preferences.joystick_guid.is_empty()
+                || (self.preferences.joystick_guid.len() == 32
+                    && self
+                        .preferences
+                        .joystick_guid
+                        .bytes()
+                        .all(|b| b.is_ascii_hexdigit())))
             && self.servers.len() <= MAX_ENTRIES
             && self.presets.len() <= MAX_ENTRIES
             && self.servers.iter().all(Server::valid)
@@ -359,7 +382,28 @@ struct LegacyV3 {
     version: u32,
     servers: Vec<Server>,
     presets: Vec<LegacyMonitorPreset>,
-    preferences: Preferences,
+    preferences: LegacyPreferences,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyPreferences {
+    ptt_key: u8,
+}
+impl From<LegacyPreferences> for Preferences {
+    fn from(old: LegacyPreferences) -> Self {
+        Self {
+            ptt_key: old.ptt_key,
+            ..Self::default()
+        }
+    }
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyV4 {
+    version: u32,
+    servers: Vec<Server>,
+    presets: Vec<Preset>,
+    preferences: LegacyPreferences,
 }
 fn decode(bytes: &[u8]) -> Result<Data, StoreError> {
     #[derive(Deserialize)]
@@ -374,7 +418,7 @@ fn decode(bytes: &[u8]) -> Result<Data, StoreError> {
                 return Err(StoreError::Invalid);
             }
             Data {
-                version: 4,
+                version: 5,
                 preferences: Preferences::default(),
                 servers: old.servers,
                 presets: old
@@ -403,7 +447,7 @@ fn decode(bytes: &[u8]) -> Result<Data, StoreError> {
                 return Err(StoreError::Invalid);
             }
             Data {
-                version: 4,
+                version: 5,
                 servers: old.servers,
                 presets: old.presets.into_iter().map(Into::into).collect(),
                 preferences: Preferences::default(),
@@ -415,13 +459,25 @@ fn decode(bytes: &[u8]) -> Result<Data, StoreError> {
                 return Err(StoreError::Invalid);
             }
             Data {
-                version: 4,
+                version: 5,
                 servers: old.servers,
                 presets: old.presets.into_iter().map(Into::into).collect(),
-                preferences: old.preferences,
+                preferences: old.preferences.into(),
             }
         }
-        4 => serde_json::from_slice(bytes).map_err(|_| StoreError::Invalid)?,
+        4 => {
+            let old: LegacyV4 = serde_json::from_slice(bytes).map_err(|_| StoreError::Invalid)?;
+            if old.version != 4 {
+                return Err(StoreError::Invalid);
+            }
+            Data {
+                version: 5,
+                servers: old.servers,
+                presets: old.presets,
+                preferences: old.preferences.into(),
+            }
+        }
+        5 => serde_json::from_slice(bytes).map_err(|_| StoreError::Invalid)?,
         _ => return Err(StoreError::Invalid),
     };
     if !data.valid() {
@@ -775,6 +831,7 @@ mod tests {
         );
         let mut legacy = serde_json::to_value(&data).unwrap();
         legacy["version"] = 3.into();
+        legacy["preferences"] = serde_json::json!({"ptt_key": 12});
         for radio in legacy["presets"][0]["radios"].as_array_mut().unwrap() {
             radio.as_object_mut().unwrap().remove("routing");
         }
@@ -914,7 +971,7 @@ mod tests {
         duplicate.servers.push(duplicate.servers[0].clone());
         for bytes in [
             b"{broken".to_vec(),
-            br#"{"version":5,"servers":[],"presets":[]}"#.to_vec(),
+            br#"{"version":6,"servers":[],"presets":[]}"#.to_vec(),
             vec![b' '; MAX_BYTES + 1],
             serde_json::to_vec(&invalid).unwrap(),
             serde_json::to_vec(&duplicate).unwrap(),
@@ -999,7 +1056,7 @@ mod tests {
             .unwrap();
         s.save(data).unwrap();
         let data = store(path.clone()).load().unwrap();
-        assert_eq!(data.version, 4);
+        assert_eq!(data.version, 5);
         assert_eq!(data.presets[0].monitor().unwrap(), levels);
         let mut invalid = serde_json::to_value(data).unwrap();
         invalid["presets"][0]["radios"][1]["volume"] = 101.into();
@@ -1019,4 +1076,48 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         drop(Worker::start(Some(dir.path().join("profiles.json"))).unwrap());
     }
+    #[test]
+    fn background_bindings_roundtrip_and_v4_migrates_without_enabling_input() {
+        let mut data = example();
+        data.preferences.background_mode = 2;
+        data.preferences.background_key = 12;
+        data.preferences.background_modifiers = 6;
+        data.preferences.joystick_guid = "0123456789abcdef0123456789abcdef".into();
+        data.preferences.joystick_button = 127;
+        let bytes = serde_json::to_vec(&data).unwrap();
+        assert_eq!(decode(&bytes).unwrap(), data);
+        let text = std::str::from_utf8(&bytes).unwrap();
+        assert!(!text.contains("instance"));
+        assert!(!text.contains("held"));
+        assert!(!text.contains("background_enabled"));
+        let mut legacy = serde_json::to_value(&data).unwrap();
+        legacy["version"] = 4.into();
+        legacy["preferences"] = serde_json::json!({"ptt_key": 12});
+        let migrated = decode(&serde_json::to_vec(&legacy).unwrap()).unwrap();
+        assert_eq!(migrated.presets, data.presets);
+        assert_eq!(
+            migrated.preferences,
+            Preferences {
+                ptt_key: 12,
+                ..Default::default()
+            }
+        );
+        legacy["preferences"]["background_mode"] = 2.into();
+        assert_eq!(
+            decode(&serde_json::to_vec(&legacy).unwrap()),
+            Err(StoreError::Invalid)
+        );
+        for field in ["background_key", "background_modifiers", "joystick_button"] {
+            let mut invalid = serde_json::to_value(&data).unwrap();
+            invalid["preferences"][field] = 255.into();
+            assert_eq!(
+                decode(&serde_json::to_vec(&invalid).unwrap()),
+                Err(StoreError::Invalid)
+            );
+        }
+    }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "dialog_tests.rs"]
+mod dialog_tests;
