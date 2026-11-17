@@ -26,7 +26,8 @@ Use an authorized private server and two separate headset endpoints, one running
 | Speech quality | Assess intelligibility, perceived delay, clipping and drops | Detailed assessment pending |
 | Windows-to-Linux frequency isolation | With other Linux radios and guard off, Windows radio 1 at 251.000 MHz AM is silent on Linux radio 1 at 252.000 MHz AM; returning Linux to 251.000 MHz AM restores speech | User reported the requested check working on 2026-11-17. |
 | Reverse-direction frequency isolation; wrong modulation/key/coalition; guard | Only eligible audio plays; matched guard works | Pending |
-| Both/Left/Right and mono; multiple speakers, mute/volume | Correct ears and levels; no stale partial frame after routing change | Pending |
+| Linux radio 1 mute/unmute with stock Windows speech | Muting stops audible speech while RX still shows reception; unmuting restores speech | User reported the requested check working on 2026-11-17, with Windows transmitting on 251.000 MHz AM. |
+| Both/Left/Right and mono; multiple speakers and receive volume | Correct ears and levels; no stale partial frame after routing change | Pending |
 | Focused key/Space/pointer and enabled background keyboard/HOTAS | Fresh release/press required; no stuck TX or unwanted source takeover | Pending |
 | Unplug input/output or change OS route while speaking | Audio stops, TX releases; no automatic fallback or resumed hold | Pending |
 | Lock, sleep/resume, network removal and reconnect | No stale audio/TX; explicit reconnect after worker/device interruption | Pending |
