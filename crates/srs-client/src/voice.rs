@@ -190,6 +190,12 @@ impl VoiceConnection {
     pub fn is_ready(&self) -> bool {
         self.check().is_ok()
     }
+    /// Stamp for downstream audio queues. A changed stamp requires flushing
+    /// decoded/device audio and a fresh PTT action, even before the next event.
+    pub fn authorization_revision(&self) -> Result<u64, VoiceError> {
+        self.check()?;
+        Ok(self.authorization.borrow().revision)
+    }
     pub fn is_transmitting(&self) -> bool {
         self.check().is_ok()
             && self.ptt.is_some_and(|(slot, revision)| {

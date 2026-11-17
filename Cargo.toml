@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/srs-core", "crates/srs-protocol", "crates/srs-client", "crates/srs-audio", "crates/srs-device"]
+members = ["crates/srs-core", "crates/srs-protocol", "crates/srs-client", "crates/srs-audio", "crates/srs-device", "crates/srs-toc"]
 resolver = "3"
 
 [workspace.package]

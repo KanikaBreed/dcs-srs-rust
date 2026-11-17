@@ -54,3 +54,5 @@ Numeric release thresholds will be set from measured baseline results before bet
 ## Evidence and privacy
 
 Use generated audio and synthetic identities for automated captures. Store logs/screenshots locally in `.scratch/`, review and redact before sharing, and never publish coalition credentials, APNs tokens, private server addresses, personal paths, or other users' voices. Note exactly which checks were run and which still require a person or device. Follow [bug reporting](BUG_REPORTING.md).
+
+The integrated [TOC console checks](TOC_CONSOLE.md) add generated callback-to-network tests, mono mix/saturation, input expiry and ownership loss, and session/device cancellation. `test_stock_server.py` also runs the synthetic session audio probe and an actual native null-PCM console session in its private network namespace. Physical listening and held-key/hardware PTT remain pending.

@@ -469,3 +469,34 @@ async fn peer_disconnect_allows_sequence_restart_without_releasing_local_ptt() {
         crate::receive::QueueOutcome::Queued
     );
 }
+
+#[tokio::test(start_paused = true)]
+async fn mono_mix_sums_due_speakers_once_saturates_and_revokes_backlog() {
+    let (mut voice, _server, _, auth, _live) = registered().await;
+    let mut packet = audio_packet(&voice, 1);
+    let mut decoder = srs_audio::Decoder::new().unwrap();
+    let mut single = [0; srs_audio::OUTPUT_SAMPLES];
+    decoder.decode(&packet.audio, &mut single).unwrap();
+    for speaker in b'B'..=b'E' {
+        packet.original_client_id = ClientId::from_bytes(&[speaker; 22]).unwrap();
+        voice.buffer_voice(&packet).unwrap();
+    }
+    let mut output = [1; srs_audio::OUTPUT_SAMPLES];
+    assert_eq!(voice.poll_mix(&mut output).unwrap().speakers, 0);
+    assert!(output.iter().all(|x| *x == 0));
+    tokio::time::advance(Duration::from_millis(80)).await;
+    let mix = voice.poll_mix(&mut output).unwrap();
+    assert_eq!(mix.speakers, 4);
+    assert!(mix.clipped_samples > 0);
+    for (actual, sample) in output.iter().zip(single) {
+        assert_eq!(
+            *actual,
+            (i32::from(sample) * 4).clamp(i16::MIN as i32, i16::MAX as i32) as i16
+        );
+    }
+    assert_eq!(voice.poll_mix(&mut output).unwrap().speakers, 0);
+    update_policy(&auth, |p| p.radios[1].frequency_hz = 252e6);
+    tokio::time::advance(Duration::from_millis(40)).await;
+    assert_eq!(voice.poll_mix(&mut output).unwrap().speakers, 0);
+    assert!(output.iter().all(|x| *x == 0));
+}

@@ -1,6 +1,6 @@
 # Platform implementation plan
 
-Application delivery below remains planned. The shared radio engine and explicit desktop audio probe build on host targets. The native Linux adapter is exercised with an isolated null PCM; physical audio and full radio application validation remain pending. See [device guide](DEVICES.md).
+Application delivery below remains planned. The shared radio engine, desktop audio probe and integrated timed-TX [TOC console](TOC_CONSOLE.md) build on host targets. The native Linux adapter is exercised with an isolated null PCM; physical audio and full radio application validation remain pending. See [device guide](DEVICES.md).
 
 | Target | Native responsibilities | Acceptance gate |
 |---|---|---|

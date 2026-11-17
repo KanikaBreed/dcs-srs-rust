@@ -13,6 +13,8 @@ import tempfile
 import time
 import urllib.request
 
+from test_toc_console import verify_console
+
 ROOT = Path(__file__).resolve().parent.parent
 SHA256 = "46268dd35204d04426974f66d25eaddaebbaa6b133a7bd227675fae30ed88127"
 URL = "https://github.com/ciribob/DCS-SimpleRadioStandalone/releases/download/2.4.1.0/SRS-Server-Commandline-Linux"
@@ -23,6 +25,30 @@ def verified_binary(path):
         digest = hashlib.file_digest(source, "sha256").hexdigest()
     if digest != SHA256:
         raise SystemExit("Stock server SHA-256 differs from the pinned official release")
+
+
+def measured_probe(command):
+    """Reap this exact Linux child and report its CPU/RSS, excluding the server."""
+    process = subprocess.Popen(command, cwd=ROOT)
+    began = time.monotonic()
+    try:
+        while True:
+            pid, status, usage = os.wait4(process.pid, os.WNOHANG)
+            if pid:
+                process.returncode = os.waitstatus_to_exitcode(status)
+                if process.returncode:
+                    raise subprocess.CalledProcessError(process.returncode, command)
+                print(f"Session audio probe: wall={time.monotonic()-began:.3f}s "
+                      f"user_cpu={usage.ru_utime:.3f}s system_cpu={usage.ru_stime:.3f}s "
+                      f"peak_rss={usage.ru_maxrss}KiB (two synthetic endpoints; no devices)", flush=True)
+                return
+            if time.monotonic() - began > 30:
+                raise subprocess.TimeoutExpired(command, 30)
+            time.sleep(0.01)
+    finally:
+        if process.returncode is None:
+            process.kill()
+            process.wait()
 
 
 def main():
@@ -50,7 +76,7 @@ def main():
             temporary.replace(binary)
         verified_binary(binary)
         binary.chmod(binary.stat().st_mode | 0o100)
-        subprocess.run(["cargo", "build", "--locked", "-p", "srs-client", "--examples"], cwd=ROOT, check=True)
+        subprocess.run(["cargo", "build", "--locked", "-p", "srs-client", "-p", "srs-toc", "--examples", "--bins"], cwd=ROOT, check=True)
         namespace = os.readlink("/proc/self/ns/net")
         command = ["unshare", "--net"]
         if os.geteuid() != 0:
@@ -109,6 +135,8 @@ def main():
                     if enabled:
                         subprocess.run([str(ROOT / "target/debug/examples/voice_probe"), f"127.0.0.1:{port}"],
                                        cwd=ROOT, check=True, timeout=30)
+                        measured_probe([str(ROOT / "target/debug/examples/session_audio_probe"), f"127.0.0.1:{port}"])
+                        verify_console(f"127.0.0.1:{port}")
                 finally:
                     if process.poll() is None:
                         os.killpg(process.pid, signal.SIGTERM)

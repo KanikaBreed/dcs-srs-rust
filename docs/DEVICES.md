@@ -1,6 +1,6 @@
 # Desktop audio adapter and probe
 
-`srs-device` adds explicit native input/output ownership, bounded callback bridges, and a local audio probe. Windows, Linux, and macOS builds use CPAL's default WASAPI, ALSA, and CoreAudio hosts respectively. Physical headset/hotplug/listening validation is pending. This is not yet an interactive SRS application: the probe has no network connection or hardware/global PTT controls.
+`srs-device` adds explicit native input/output ownership, bounded callback bridges, and a local audio probe. Windows, Linux, and macOS builds use CPAL's default WASAPI, ALSA, and CoreAudio hosts respectively. Physical headset/hotplug/listening validation is pending. The local probe has no network connection or hardware/global PTT controls. The separate [TOC console](TOC_CONSOLE.md) now integrates these bridges with SRS and timed transmit commands.
 
 ## Build and run intentionally
 
@@ -47,7 +47,7 @@ The adapter follows the existing SRS 16 kHz/640-sample encoder and 48 kHz/1920-s
 
 A capture permit belongs to one bridge instance and generation. A frame from a released permit or a previous device instance cannot validate after reopening. `CaptureReader::validate_frame` must be called after encoding and immediately before network handoff. Device errors and ownership/lifecycle loss must also release the separate network PTT gate; the device library does not own a `VoiceConnection`.
 
-A future session worker should acquire a fresh capture permit together with `press_ptt`, renew only while the input owner remains active, and call both `CaptureReader::release` and `VoiceConnection::release_ptt` on release/interruption/error. Feed `poll_audio` output to the playback writer and call `flush` when receive policy changes or the session disconnects. Keep TCP polling persistent; cancelling a control read closes the session. This orchestration, mixing several speakers, and keyboard/HID/PTT ownership are still to be implemented.
+The `srs-toc` session worker acquires a fresh capture permit together with `press_ptt`, renews only while the input owner remains active, and calls both `CaptureReader::release` and `VoiceConnection::release_ptt` on release/interruption/error. It feeds `poll_mix` output to the playback writer and flushes it on policy/session changes. TCP polling stays persistent; cancelling a control read closes the session. This orchestration and an equal-gain mono mix are implemented in `srs-toc`; keyboard/HID hold-to-talk remains pending.
 
 The data-callback bodies perform format conversion, bounded copying, clock reads, atomic operations, and SPSC push/pop only. They do not enter an async runtime, allocate/free, log, perform file/network I/O, run codecs/FIR, or take mutexes. The error callbacks only set a stop flag. `rtrb` preallocates its storage. All stream construction, buffer allocation, error reporting, and codec work occur outside data callbacks. Tests instrument the Rust bridge callback paths to assert zero heap allocations/deallocations; this does not establish hard real-time guarantees for CPAL, the OS, or a driver.
 

@@ -1,6 +1,7 @@
 //! Standalone receive policy follows desktop UDPClientAudioProcessor.cs and
 //! SyncedServerSettings.cs, Ciribob and contributors, GPLv3, upstream d01f540c.
-//! No terrain model, effects, mixing, or device callbacks. See docs/RECEIVE.md.
+//! The initial mono mixer is new code. No terrain model, effects, or device
+//! callbacks. See docs/RECEIVE.md.
 use crate::{
     Error, RADIO_COUNT, Session,
     voice::{ReceivedVoice, VoiceConnection, VoiceError},
@@ -113,6 +114,11 @@ pub struct Playout {
     pub packet_number: u64,
     pub kind: FrameKind,
 }
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Mix {
+    pub speakers: usize,
+    pub clipped_samples: usize,
+}
 struct Stream {
     speaker: ClientId,
     last_received: Instant,
@@ -139,6 +145,38 @@ impl ReceiveState {
     }
 }
 impl VoiceConnection {
+    /// Worker-only 40 ms mono mix: at most one due frame per original speaker.
+    /// Equal gain, integer sum and final saturation; no serial speaker backlog.
+    /// Call on a 40 ms cadence. Each speaker retains its own decoder and PLC.
+    /// This initial mix does not implement upstream radio effects or panning.
+    pub fn poll_mix(&mut self, pcm: &mut [i16; OUTPUT_SAMPLES]) -> Result<Mix, VoiceError> {
+        pcm.fill(0);
+        self.sync_receive()?;
+        let now = Instant::now().duration_since(self.receive.origin);
+        let mut sum = [0i32; OUTPUT_SAMPLES];
+        let mut decoded = [0; OUTPUT_SAMPLES];
+        let mut mix = Mix::default();
+        for stream in &mut self.receive.streams {
+            if stream
+                .buffer
+                .poll(now, &mut decoded)
+                .map_err(VoiceError::Codec)?
+                .is_some()
+            {
+                mix.speakers += 1;
+                for (total, sample) in sum.iter_mut().zip(decoded) {
+                    *total += i32::from(sample);
+                }
+            }
+        }
+        for (output, total) in pcm.iter_mut().zip(sum) {
+            let limited = total.clamp(i16::MIN as i32, i16::MAX as i32);
+            mix.clipped_samples += usize::from(limited != total);
+            *output = limited as i16;
+        }
+        Ok(mix)
+    }
+
     /// Forward `Event::ClientDisconnected(id)` here. SRS restarts its
     /// sequence on reconnect, sometimes retaining identity. Drop that speaker's
     /// decoder/high-water mark without interrupting local PTT or other speakers.

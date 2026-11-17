@@ -18,6 +18,8 @@ Source revision: `d01f540ce5e363e9ac841775c8f7e2253138cd81`. Relevant source fil
 
 `crates/srs-device` contains new callback queue, permit, native adapter, and FIR code. Upstream desktop `AudioManager.cs` at the same pinned revision was inspected for capture/resampling/codec boundaries; its WASAPI/EventDrivenResampler implementation is not copied.
 
+`crates/srs-toc` and the initial mono mixer are new orchestration code. Upstream desktop `AudioManager.cs` and `UDPClientAudioProcessor.cs` at the pinned revision were inspected for PTT/capture/stop and speaker-mix boundaries. Their input-release delays, mixer/effects implementation and desktop UI are not copied. This addition uses the existing locked dependencies; no new third-party library is introduced.
+
 For future source-derived additions, retain original copyright/license notices and record exact files/revisions and modifications here and near the code. Review separately licensed assets before copying them.
 
 ## Aurora workflow adaptation
