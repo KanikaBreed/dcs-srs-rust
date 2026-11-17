@@ -1,6 +1,6 @@
 # Desktop validation handoff
 
-This checklist is for the Windows/Linux standalone TOC preview. Physical tests below are **pending**, even when CI passes. Do not use a shared server or microphone until its operator/user has agreed to that test. Use headphones. This build is not an installer or release.
+This checklist is for the Windows/Linux standalone TOC preview. A basic two-way speech check between the Linux Rust client and stock SRS on Windows was reported working on 2026-11-17; the build identity and limits are recorded in [VOICE_VALIDATION.md](VOICE_VALIDATION.md). The remaining physical checks below are **pending**, even when CI passes. Do not use a shared server or microphone until its operator/user has agreed to that test. Use headphones. This build is not an installer or release.
 
 ## Prepare an identifiable build
 

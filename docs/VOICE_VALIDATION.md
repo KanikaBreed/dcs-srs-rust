@@ -20,13 +20,22 @@ Use an authorized private server and two separate headset endpoints, one running
 
 | Check | Expected result | Current human result |
 |---|---|---|
-| Speak both ways on matching coalition/radio | Intelligible speech; note perceived delay, clipping and drops | Pending |
+| Speak both ways on matching coalition/radio | Speech is heard at both endpoints | User reported both directions working on 2026-11-17; see the session record below. |
+| Speech quality | Assess intelligibility, perceived delay, clipping and drops | Detailed assessment pending |
 | Wrong frequency/modulation/key/coalition; guard | Only eligible audio plays; matched guard works | Pending |
 | Both/Left/Right and mono; multiple speakers, mute/volume | Correct ears and levels; no stale partial frame after routing change | Pending |
 | Focused key/Space/pointer and enabled background keyboard/HOTAS | Fresh release/press required; no stuck TX or unwanted source takeover | Pending |
 | Unplug input/output or change OS route while speaking | Audio stops, TX releases; no automatic fallback or resumed hold | Pending |
 | Lock, sleep/resume, network removal and reconnect | No stale audio/TX; explicit reconnect after worker/device interruption | Pending |
 | Multi-hour optimized session | Record CPU, peak/stable memory, latency, drops, battery if applicable | Pending |
+
+## First human voice result (2026-11-17)
+
+The user connected stock SRS 2.4.1.0 on a Windows laptop and the Rust desktop client on Arch Linux/Wayland to the private stock SRS 2.4.1.0 server hosted on the Linux machine. After connecting both clients, the user reported “works both ways.” This establishes a basic human-reported two-way speech pass for these endpoints. It does not validate the Rust client on Windows.
+
+The prepared test used Blue External AWACS Mode, radio 1 at 251.000 MHz AM, with encryption off. The running Linux development build came from clean source `be92335989ea7143fe968dd56ac50887e7cedecb`, whose tree matches merged main `bcf2c8f1525d8ad599c7b375f84edd10f50950cd`. Its executable SHA-256 is `ce1d1756186e2632fe47aa3939a5864903a100d946def774f23e8d8d700cfdc0`.
+
+Headset/microphone models, drivers, Windows version, chosen PTT input, test duration, detailed speech quality and latency were not reported. PTT release/focus behavior, radio isolation, stereo routing, device removal, interruption/recovery and soak checks remain pending. No voice recording was collected by the agent; credentials, network addresses and device identifiers are excluded from this record.
 
 ## Repeatable software checks
 
@@ -51,4 +60,4 @@ The Wayland script starts its own virtual KWin, runtime/config/cache/data direct
 
 Linux x86_64 development build, SRS 2.4.1.0 in a private namespace: the 120-second request completed 49 two-way rounds (121.63 seconds, 2,450 generated sent frames). The relay injected 144 drops and 80 duplicates with zero relay overflow. All 98 talk turns met playout/isolation checks; first capture-to-audible callback was 130–251 ms under these impairments. Maximum measured playback-bridge work was 120 microseconds. Intentional PTT flushes invalidated 37 playback tails; unexpected capture/playback queue drops and engine playback overflows were zero. The process used 4.614 s user CPU plus 0.118 s system CPU over 121.691 s wall time, with 27,564 KiB peak RSS. These are local debug/generated-signal observations, not production latency or headset measurements.
 
-The full-workspace check passed 140 ordinary tests; six environment-specific tests are exercised separately (private GUI, native chooser, null diagnostics, virtual joystick, X11 and shortcut portal). The private GUI passed focused Space transmission, Tab-away release and diagnostic/session exclusion as well as the existing TCP recovery checks. Private KWin rendered 18 cases at 900×800 logical size across 100% and 150% scaling. Windows/macOS host results are recorded with the PR's exact CI revision. All human rows above remain pending.
+The full-workspace check passed 140 ordinary tests; six environment-specific tests are exercised separately (private GUI, native chooser, null diagnostics, virtual joystick, X11 and shortcut portal). The private GUI passed focused Space transmission, Tab-away release and diagnostic/session exclusion as well as the existing TCP recovery checks. Private KWin rendered 18 cases at 900×800 logical size across 100% and 150% scaling. Windows/macOS host results are recorded with the PR's exact CI revision. These software results are separate from the human-reported two-way speech result above; the remaining human rows are pending.
