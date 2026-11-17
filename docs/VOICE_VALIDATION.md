@@ -22,6 +22,7 @@ Use an authorized private server and two separate headset endpoints, one running
 |---|---|---|
 | Speak both ways on matching coalition/radio | Speech is heard at both endpoints | User reported both directions working on 2026-11-17; see the session record below. |
 | Basic PTT release at both endpoints | TX indication turns off immediately on release and the other endpoint stops receiving | User reported the requested check working correctly on 2026-11-17. Exact input method and measured stop latency were not recorded. |
+| Manual Linux disconnect/reconnect | Reconnected client starts with TX off, transmits only after a fresh PTT press, and speech works both ways again | User reported the requested check working on 2026-11-17. |
 | Speech quality | Assess intelligibility, perceived delay, clipping and drops | Detailed assessment pending |
 | Wrong frequency/modulation/key/coalition; guard | Only eligible audio plays; matched guard works | Pending |
 | Both/Left/Right and mono; multiple speakers, mute/volume | Correct ears and levels; no stale partial frame after routing change | Pending |
@@ -34,9 +35,11 @@ Use an authorized private server and two separate headset endpoints, one running
 
 The user connected stock SRS 2.4.1.0 on a Windows laptop and the Rust desktop client on Arch Linux/Wayland to the private stock SRS 2.4.1.0 server hosted on the Linux machine. After connecting both clients, the user reported “works both ways.” The follow-up asked the user to hold PTT, speak, release, confirm TX turns off immediately and the other endpoint stops receiving, then repeat from both clients; the user reported “works correctly.” These establish basic human-reported two-way speech and PTT-release passes for these endpoints. They do not validate the Rust client on Windows or establish a measured stop-latency bound.
 
+The user subsequently reported the manual Linux disconnect/reconnect check working: TX starts off after reconnect, transmission requires a fresh PTT press, and two-way speech resumes. This is a manual reconnect result; forced network loss, automatic retry and disconnect with PTT held were not part of the requested check.
+
 The prepared test used Blue External AWACS Mode, radio 1 at 251.000 MHz AM, with encryption off. The running Linux development build came from clean source `be92335989ea7143fe968dd56ac50887e7cedecb`, whose tree matches merged main `bcf2c8f1525d8ad599c7b375f84edd10f50950cd`. Its executable SHA-256 is `ce1d1756186e2632fe47aa3939a5864903a100d946def774f23e8d8d700cfdc0`.
 
-Headset/microphone models, drivers, Windows version, chosen PTT input, test duration, detailed speech quality and latency were not reported. Input-specific PTT calibration/focus/background behavior, radio isolation, stereo routing, device removal, interruption/recovery and soak checks remain pending. No voice recording was collected by the agent; credentials, network addresses and device identifiers are excluded from this record.
+Headset/microphone models, drivers, Windows version, chosen PTT input, test duration, detailed speech quality and latency were not reported. Input-specific PTT calibration/focus/background behavior, radio isolation, stereo routing, device removal, interruption/automatic recovery and soak checks remain pending. No voice recording was collected by the agent; credentials, network addresses and device identifiers are excluded from this record.
 
 ## Repeatable software checks
 
