@@ -21,7 +21,7 @@ Standalone coalition operation uses SRS External AWACS Mode. Server administrato
 
 ## Development
 
-Install [Rust through rustup](https://rustup.rs), a native toolchain with a C compiler and CMake for your host, and Python 3.11 or newer. The Opus dependency builds its bundled native library. Linux also needs ALSA development headers and pkg-config (`libasound2-dev pkg-config libxkbcommon-dev libxkbcommon-x11-0 libfontconfig1-dev` on Debian/Ubuntu). The checked-in toolchain file selects stable Rust with rustfmt and clippy.
+Install [Rust through rustup](https://rustup.rs), a native toolchain with a C compiler and CMake for your host, and Python 3.11 or newer. The Opus dependency builds its bundled native library. Linux also needs ALSA development headers and pkg-config (`libasound2-dev pkg-config libxkbcommon-dev libxkbcommon-x11-dev libfontconfig1-dev libx11-xcb-dev libx11-dev libxcursor-dev xinput` on Debian/Ubuntu). The checked-in toolchain file selects stable Rust with rustfmt and clippy.
 
 ```sh
 git clone https://github.com/KanikaBreed/dcs-srs-rust.git

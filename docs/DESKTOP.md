@@ -4,7 +4,7 @@ Windows and Linux desktop delivery now comes before Android/iOS. `srs-desktop` p
 
 ## Run
 
-Install stable Rust (at least 1.95 for Slint 1.19), a C/C++ toolchain and CMake. Windows builds use the MSVC toolchain. On Debian/Ubuntu, install `libasound2-dev pkg-config libxkbcommon-dev libxkbcommon-x11-0 libfontconfig1-dev`; a graphical X11 or Wayland session and system fonts are required. The renderer is software-based and does not require Qt.
+Install stable Rust (at least 1.95 for Slint 1.19), a C/C++ toolchain and CMake. Windows builds use the MSVC toolchain. On Debian/Ubuntu, install `libasound2-dev pkg-config libxkbcommon-dev libxkbcommon-x11-dev libfontconfig1-dev libx11-xcb-dev libx11-dev libxcursor-dev xinput`; a graphical X11 or Wayland session and system fonts are required. The renderer is software-based and does not require Qt. X11 packages follow the [Slint winit dependency list](https://docs.slint.dev/latest/docs/slint/guide/backends-and-renderers/backend_winit/).
 
 ```sh
 cargo run --locked -p srs-desktop
