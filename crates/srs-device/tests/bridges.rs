@@ -324,6 +324,20 @@ fn device_config_selection_has_no_silent_rate_or_channel_fallback() {
         (1, 48000, F::F32)
     );
     assert_eq!(output.channels(), 2);
+    // A higher-ranked mono sample format must not discard available stereo.
+    for stereo_format in [F::I16, F::U16] {
+        let output = choose_config(
+            [range(1, 48000, F::F32), range(2, 48000, stereo_format)].into_iter(),
+            Direction::Output,
+        )
+        .unwrap();
+        assert_eq!(
+            (output.channels(), output.sample_format()),
+            (2, stereo_format)
+        );
+    }
+    let mono = choose_config([range(1, 48000, F::F32)].into_iter(), Direction::Output).unwrap();
+    assert_eq!(mono.channels(), 1);
     assert!(
         choose_config(
             [
