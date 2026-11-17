@@ -4,7 +4,7 @@ A Rust client project for [DCS SimpleRadio Standalone](https://github.com/ciribo
 
 The first product is a standalone **TOC (tactical operations center) radio console**: monitor several radio nets and transmit with push-to-talk through an existing SRS server, without running DCS on the operator's device.
 
-**Status: working control session.** `srs-client` connects to SRS, signs into External AWACS Mode, and exchanges radio state. Its login, rejection, disabled-mode, and radio-update behavior is tested against the unmodified SRS 2.4.1.0 Linux server. `srs-protocol` handles TCP messages and UDP packet formats, verified against original C# fixtures. Voice transport, audio capture/playback, PTT, UI, and mobile applications remain pending.
+**Status: generated voice transport.** Rust connects to SRS, authenticates coalition access, exchanges radio state, and sends/receives generated Opus audio through the unmodified SRS 2.4.1.0 server. UDP keepalives and session-bound PTT gating are implemented. Original C# codec wrappers verify Opus in both directions. Receive eligibility/jitter buffering, microphone/speaker I/O, hardware PTT, UI, and mobile applications remain pending; this is not yet an installable voice app.
 
 ## Product direction
 
@@ -19,7 +19,7 @@ Standalone coalition operation uses SRS External AWACS Mode. Server administrato
 
 ## Development
 
-Install [Rust through rustup](https://rustup.rs), a native toolchain for your host, and Python 3.11 or newer. The checked-in toolchain file selects stable Rust with rustfmt and clippy.
+Install [Rust through rustup](https://rustup.rs), a native toolchain with a C compiler and CMake for your host, and Python 3.11 or newer. The Opus dependency builds its bundled native library. The checked-in toolchain file selects stable Rust with rustfmt and clippy.
 
 ```sh
 git clone https://github.com/KanikaBreed/dcs-srs-rust.git
@@ -27,7 +27,7 @@ cd dcs-srs-rust
 python3 scripts/check.py
 ```
 
-On Windows, use `py -3 scripts/check.py`. The script checks local Markdown file links, workspace/fuzz formatting, clippy, and protocol/session tests. Tests cover upstream vectors, loopback TCP sessions, authentication, cancellation, policy changes, and resource bounds. No installed SRS server, microphone, or audio hardware is required by these checks; Cargo may download dependencies on the first build.
+On Windows, use `py -3 scripts/check.py`. The script checks local Markdown file links, workspace/fuzz formatting, clippy, and protocol/session tests. Tests cover upstream vectors, loopback TCP sessions, authentication, cancellation, policy changes, UDP keepalives/PTT, codecs, and resource bounds. No installed SRS server, microphone, or audio hardware is required by these checks; Cargo may download dependencies on the first build.
 
 The same Cargo checks can be run directly:
 
@@ -53,7 +53,7 @@ On Linux, run the actual-server conformance test:
 python3 scripts/test_stock_server.py
 ```
 
-It downloads the pinned official server to `.scratch`, checks its SHA-256, builds a Rust probe, and runs both enabled/disabled EAM scenarios in a private network namespace. Requires `unshare`, `ip`, and permission to create a user/network namespace. No microphone is opened. See [session usage and limits](docs/SESSION.md).
+It downloads the pinned official server to `.scratch`, checks its SHA-256, builds a Rust probe, and runs control and generated-voice scenarios in a private network namespace. Requires `unshare`, `ip`, and permission to create a user/network namespace. No microphone is opened. See [session usage](docs/SESSION.md) and [voice/codec behavior and limits](docs/VOICE.md).
 
 ## Project guides
 

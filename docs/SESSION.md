@@ -1,6 +1,6 @@
 # TCP and External AWACS Mode sessions
 
-`srs-client` is a library with a runnable conformance probe. It has no audio transport, microphone access, PTT implementation, user interface, or reconnect worker yet.
+`srs-client` is a library with runnable conformance probes. Its TCP/EAM contract is described here; [VOICE.md](VOICE.md) covers the UDP transport, session-bound PTT gate, and Opus adapter. There is no microphone/speaker I/O, hardware input, user interface, or reconnect worker yet.
 
 ## Calling the library
 
@@ -50,4 +50,4 @@ CI opts into `SRS_TEST_SUDO_NAMESPACE=1` for hosts that prohibit unprivileged us
 
 The probe asserts SYNC version, wrong-password rejection, Blue and Red authentication, radio updates observed by another Rust endpoint through the server, AM/FM, guard/key fields, EAM leave/reset, peer disconnection, and rejection of an old client version. Disabled-mode testing checks both the client's refusal to send credentials and the stock server's coalition-0 response to a direct synthetic request. It handles unrelated interleaved broadcasts while awaiting replies.
 
-This establishes control interoperability with an unmodified server. Stock-client audio interoperability, UDP transport, Opus, human listening, PTT hardware, and Android/iOS execution remain separate milestones.
+This establishes control interoperability with an unmodified server. The runner additionally tests generated Opus through UDP in both directions; see [VOICE.md](VOICE.md) for measurements and limits. Full stock-client audio interoperability, receive eligibility/jitter buffering, human listening, PTT hardware, and Android/iOS execution remain pending.

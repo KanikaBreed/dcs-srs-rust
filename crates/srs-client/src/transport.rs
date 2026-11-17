@@ -4,6 +4,7 @@ use srs_protocol::control::{ControlDecoder, ControlMessage};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
+    sync::watch,
     time::timeout,
 };
 
@@ -16,6 +17,7 @@ pub(crate) struct Transport {
     start: usize,
     end: usize,
     write_timeout: Duration,
+    alive: watch::Sender<bool>,
 }
 
 impl Transport {
@@ -31,7 +33,12 @@ impl Transport {
             start: 0,
             end: 0,
             write_timeout: deadline,
+            alive: watch::channel(true).0,
         })
+    }
+
+    pub fn liveness(&self) -> watch::Receiver<bool> {
+        self.alive.subscribe()
     }
 
     pub async fn send(&mut self, message: &ControlMessage) -> Result<(), Error> {
@@ -61,5 +68,11 @@ impl Transport {
                 return Err(Error::Disconnected);
             }
         }
+    }
+}
+
+impl Drop for Transport {
+    fn drop(&mut self) {
+        self.alive.send_replace(false);
     }
 }
