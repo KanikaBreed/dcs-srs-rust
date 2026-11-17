@@ -38,6 +38,11 @@ jobs:
       - name: Compile fuzz targets
         if: matrix.os == 'ubuntu-latest'
         run: cargo check --manifest-path fuzz/Cargo.toml --bins --locked
+      - name: Verify session against isolated stock SRS server
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          SRS_TEST_SUDO_NAMESPACE: '1'
+        run: python scripts/test_stock_server.py
       - name: Set up .NET for independent upstream verification
         if: matrix.os == 'ubuntu-latest'
         uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5

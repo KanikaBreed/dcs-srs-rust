@@ -4,7 +4,7 @@ A Rust client project for [DCS SimpleRadio Standalone](https://github.com/ciribo
 
 The first product is a standalone **TOC (tactical operations center) radio console**: monitor several radio nets and transmit with push-to-talk through an existing SRS server, without running DCS on the operator's device.
 
-**Status: protocol foundation.** The `srs-protocol` crate reads and writes SRS UDP voice packets/keepalives and bounded newline-delimited TCP control messages. Independent fixtures come from the original C# implementation and its tests. There is no connected client, audio capture/playback, UI, or installable application yet; offline wire compatibility does not establish live-session or mobile support.
+**Status: working control session.** `srs-client` connects to SRS, signs into External AWACS Mode, and exchanges radio state. Its login, rejection, disabled-mode, and radio-update behavior is tested against the unmodified SRS 2.4.1.0 Linux server. `srs-protocol` handles TCP messages and UDP packet formats, verified against original C# fixtures. Voice transport, audio capture/playback, PTT, UI, and mobile applications remain pending.
 
 ## Product direction
 
@@ -27,7 +27,7 @@ cd dcs-srs-rust
 python3 scripts/check.py
 ```
 
-On Windows, use `py -3 scripts/check.py`. The script checks local Markdown file links, workspace/fuzz formatting, clippy, and protocol tests. Tests cover upstream vectors, fragmented/coalesced TCP, size bounds, malformed input, and unknown wire values. No SRS server, microphone, or audio hardware is required by these checks; Cargo may download dependencies on the first build.
+On Windows, use `py -3 scripts/check.py`. The script checks local Markdown file links, workspace/fuzz formatting, clippy, and protocol/session tests. Tests cover upstream vectors, loopback TCP sessions, authentication, cancellation, policy changes, and resource bounds. No installed SRS server, microphone, or audio hardware is required by these checks; Cargo may download dependencies on the first build.
 
 The same Cargo checks can be run directly:
 
@@ -46,6 +46,14 @@ cargo run --locked -p srs-protocol --example roundtrip_fixtures -- crates/srs-pr
 ```
 
 The [fixture guide](crates/srs-protocol/tests/fixtures/README.md) explains how to verify those outputs with the original C# code. Linux CI performs that independent check against a pinned upstream checkout. [Fuzz targets](fuzz/README.md) are also available.
+
+On Linux, run the actual-server conformance test:
+
+```sh
+python3 scripts/test_stock_server.py
+```
+
+It downloads the pinned official server to `.scratch`, checks its SHA-256, builds a Rust probe, and runs both enabled/disabled EAM scenarios in a private network namespace. Requires `unshare`, `ip`, and permission to create a user/network namespace. No microphone is opened. See [session usage and limits](docs/SESSION.md).
 
 ## Project guides
 

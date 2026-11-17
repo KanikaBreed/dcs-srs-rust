@@ -15,9 +15,9 @@ Status vocabulary: TODO, IN PROGRESS, AWAITING VALIDATION, DONE, BLOCKED. Update
 
 | ID | Status | Task and acceptance |
 |---|---|---|
-| P01 | AWAITING VALIDATION | `feat/protocol-foundation`: pin clean upstream `d01f540c`; 12 synthetic fixtures verified against actual C# wire code and all four published UDP vectors. Source attribution and reproducible generator included. Live server/client version validation remains with P03. |
+| P01 | DONE | Pin clean source `d01f540c` and 12 C# fixtures/all four published UDP vectors; connected control baseline now verified with the official SRS 2.4.1.0 server and recorded SHA-256. Stock-client voice validation remains explicitly in A01. |
 | P02 | DONE | `feat/protocol-foundation`: implement `srs-protocol` UDP voice/keepalive codecs, TCP envelope and bounded incremental framing; independent vectors, malformed input, enum widths, unknown values, frame boundaries, and mutation tests. Voice/control fuzz targets compile; no fuzz campaign or live connection claimed. |
-| P03 | TODO | Authenticate External AWACS Mode and exchange radio state through an unmodified local SRS server; test rejected credentials and disabled EAM. |
+| P03 | DONE | `feat/eam-session`: `srs-client` connects/authenticates and exchanges radio state through unmodified SRS 2.4.1.0. Isolated stock-server probes pass Blue/Red login, rejected credentials, disabled EAM, two-way radio updates, guard/key/modulation, leave/reset, peer disconnect, and version rejection. Loopback tests cover cancellation, revocation, framing, periodic refreshes, and resource limits. See docs/SESSION.md; voice/PTT/mobile remain pending. |
 | A01 | TODO | Send and receive generated Opus audio between a Rust endpoint and stock SRS client; measure loss, jitter, and latency. |
 | A02 | TODO | Validate Windows/Linux capture, playback, device removal, and PTT release on an isolated test server. |
 | M01 | TODO | Android physical-device spike: service lifetime, microphone permission, locked-screen RX/TX, headset routing, interruptions. |
