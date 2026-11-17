@@ -2,7 +2,7 @@
 
 This pre-alpha repository has no supported application releases. Do not publish credentials, private packet captures, APNs tokens, or other users' voice recordings in issues.
 
-For sensitive findings, use the repository's private vulnerability reporting option if GitHub shows it under Security. If it is unavailable, open an issue containing only a request for a private reporting channel, without exploit details or secrets.
+Private vulnerability reporting is enabled. For sensitive findings, use [Report a vulnerability](https://github.com/KanikaBreed/dcs-srs-rust/security/advisories/new). If that option becomes unavailable, open an issue containing only a request for a private reporting channel, without exploit details or secrets.
 
 The implementation plan includes bounded network parsing, audited codec/native interfaces, explicit microphone/PTT ownership, redacted diagnostics, and intentional recording/export. These are requirements, not claims that a complete application has passed a security audit.
 
