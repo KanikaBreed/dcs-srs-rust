@@ -1,6 +1,6 @@
 # TCP and External AWACS Mode sessions
 
-`srs-client` is a library with runnable conformance probes. Its TCP/EAM contract is described here; [VOICE.md](VOICE.md) covers the UDP transport, session-bound PTT gate, and Opus adapter. Device I/O and session orchestration now live in the separate [TOC console](TOC_CONSOLE.md); this crate itself has no device API or reconnect worker.
+`srs-client` is a library with runnable conformance probes. Its TCP/EAM contract is described here; [VOICE.md](VOICE.md) covers the UDP transport, session-bound PTT gate, and Opus adapter. Live radio edits use `next_event_with_updates` and the bounded `commands::radio_controls` channel; see [radio update contract](KEYBOARD.md). Device I/O and session orchestration now live in the separate [TOC console](TOC_CONSOLE.md); this crate itself has no device API or reconnect worker.
 
 ## Calling the library
 

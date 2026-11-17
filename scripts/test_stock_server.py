@@ -14,6 +14,7 @@ import time
 import urllib.request
 
 from test_toc_console import verify_console
+from test_keyboard import verify_keyboard
 
 ROOT = Path(__file__).resolve().parent.parent
 SHA256 = "46268dd35204d04426974f66d25eaddaebbaa6b133a7bd227675fae30ed88127"
@@ -137,6 +138,7 @@ def main():
                                        cwd=ROOT, check=True, timeout=30)
                         measured_probe([str(ROOT / "target/debug/examples/session_audio_probe"), f"127.0.0.1:{port}"])
                         verify_console(f"127.0.0.1:{port}")
+                        verify_keyboard(f"127.0.0.1:{port}")
                 finally:
                     if process.poll() is None:
                         os.killpg(process.pid, signal.SIGTERM)

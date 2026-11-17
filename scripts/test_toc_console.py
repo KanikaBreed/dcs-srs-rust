@@ -59,6 +59,19 @@ def verify_console(address):
             wait_for("TX LOCAL")
             send("rx")
             wait_for("RX READY")
+            send("tune 2 253.125 fm")
+            wait_for("RADIO 2: 253.125000 MHz FM")
+            send("guard 2 243")
+            wait_for("RADIO 2: 253.125000 MHz FM; guard 243.000000 MHz")
+            send("key 2 7")
+            wait_for("RADIO 2: 253.125000 MHz FM; guard 243.000000 MHz; key 7")
+            send("select 2")
+            wait_for("RADIO 2: 253.125000 MHz FM")
+            send("tx 100")
+            wait_for("TX LOCAL")
+            wait_for("RX READY")
+            send("off 2")
+            wait_for("RADIO 2: 0.000001 MHz OFF")
             send("quit")
             final = wait_for("STOPPED sent=")
             process.wait(timeout=4)
@@ -67,7 +80,7 @@ def verify_console(address):
             match = re.search(r"sent=(\d+)", final)
             if match is None or int(match[1]) == 0:
                 raise RuntimeError("Console did not encode/send a null capture frame")
-            print("PASS: native null console authenticated; receive-only start, timed TX, explicit RX, quit, and stream cleanup. No hardware.", flush=True)
+            print("PASS: native null console authenticated; receive-only start, timed TX, explicit RX, live tuning/guard/key/selection/off, quit, and stream cleanup. No hardware.", flush=True)
         finally:
             if process.poll() is None:
                 process.kill()

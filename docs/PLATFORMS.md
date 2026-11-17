@@ -1,6 +1,6 @@
 # Platform implementation plan
 
-Application delivery below remains planned. The shared radio engine, desktop audio probe and integrated timed-TX [TOC console](TOC_CONSOLE.md) build on host targets. The native Linux adapter is exercised with an isolated null PCM; physical audio and full radio application validation remain pending. See [device guide](DEVICES.md).
+Application delivery below remains planned. The shared radio engine, desktop audio probe and integrated [TOC console](TOC_CONSOLE.md) build on host targets. The native Linux adapter is exercised with an isolated null PCM; physical audio and full radio application validation remain pending. See [device guide](DEVICES.md).
 
 | Target | Native responsibilities | Acceptance gate |
 |---|---|---|
@@ -36,3 +36,5 @@ Evaluate the [Global Shortcuts portal](https://flatpak.github.io/xdg-desktop-por
 ## Desktop DCS integration
 
 Standalone TOC operation is independent of running DCS. Later cockpit integration uses the existing Lua interfaces. Linux/Wine testing and access to DCS terrain/position data are separate work; a Rust Linux client is not evidence that DCS itself is natively supported there.
+
+The opt-in [foreground keyboard adapter](KEYBOARD.md) compiles for desktop hosts and is exercised with a simulated Unix terminal. Physical Windows/Linux terminal/key/headset combinations, global/HID PTT and Wayland portal support remain unvalidated.

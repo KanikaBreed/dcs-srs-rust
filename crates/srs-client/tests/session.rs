@@ -670,3 +670,117 @@ async fn receive_settings_invalidate_queued_audio_without_changing_local_radios(
     assert!(voice.poll_audio(&mut pcm).is_err());
     assert!(pcm.iter().all(|&x| x == 0));
 }
+
+async fn editable_pair() -> (Session, Peer) {
+    let (listener, address) = listener().await;
+    let serve = async {
+        let mut peer = accept(listener).await;
+        login(&mut peer, 2).await;
+        read(&mut peer).await;
+        peer
+    };
+    let connect = async {
+        let mut session = Session::connect(address, identity(), options())
+            .await
+            .unwrap();
+        session.authenticate(PASSWORD).await.unwrap();
+        let mut radios = disabled_radios();
+        radios[1] = Radio::tuned(251e6, Modulation::AM);
+        radios[1].guard_hz = 243e6;
+        session.set_radios(radios).await.unwrap();
+        session
+    };
+    let (peer, session) = tokio::join!(serve, connect);
+    (session, peer)
+}
+#[tokio::test]
+async fn live_edit_preserves_partial_tcp_message_and_rejects_policy_without_disconnect() {
+    use srs_client::commands::{RadioChange, radio_controls};
+    let (mut session, mut peer) = editable_pair().await;
+    let (control, mut updates) = radio_controls();
+    peer.get_mut()
+        .write_all(b"{\"MsgType\":4,\"ServerSettings\":{\"ALLOW_RADIO_ENCRYPTION\":")
+        .await
+        .unwrap();
+    let edit = async {
+        sleep(Duration::from_millis(20)).await;
+        control
+            .apply(RadioChange::Tune {
+                slot: 1,
+                hz: 252e6,
+                modulation: Modulation::FM,
+            })
+            .await
+            .unwrap()
+    };
+    let (event, snapshot) = tokio::join!(session.next_event_with_updates(&mut updates), edit);
+    assert_eq!(event.unwrap(), Event::LocalRadioUpdate);
+    assert_eq!(snapshot.radios[1].frequency_hz, 252e6);
+    assert_eq!(snapshot.radios[1].guard_hz, 243e6);
+    assert_eq!(
+        read(&mut peer).await["Client"]["RadioInfo"]["radios"][1]["freq"],
+        252e6
+    );
+    peer.get_mut().write_all(b"\"false\"}}\n").await.unwrap();
+    assert_eq!(
+        session.next_event_with_updates(&mut updates).await.unwrap(),
+        Event::SettingsUpdated
+    );
+    let (event, result) = tokio::join!(
+        session.next_event_with_updates(&mut updates),
+        control.apply(RadioChange::Key {
+            slot: 1,
+            key: Some(3)
+        })
+    );
+    assert_eq!(event.unwrap(), Event::LocalRadioUpdate);
+    assert!(matches!(result, Err(Error::PolicyDenied)));
+    assert_eq!(session.radios()[1].encryption_key, None);
+    assert_eq!(session.state(), State::Authenticated(Coalition::Blue));
+}
+#[tokio::test]
+async fn abandoned_and_expired_radio_requests_do_not_replay_and_connection_survives() {
+    use srs_client::commands::{RadioChange, radio_controls};
+    let (mut session, mut peer) = editable_pair().await;
+    let (control, mut updates) = radio_controls();
+    assert!(
+        timeout(
+            Duration::from_millis(2),
+            control.apply(RadioChange::Disable { slot: 1 })
+        )
+        .await
+        .is_err()
+    );
+    let (event, snapshot) = tokio::join!(
+        session.next_event_with_updates(&mut updates),
+        control.apply(RadioChange::Guard { slot: 1, hz: 242e6 })
+    );
+    assert_eq!(event.unwrap(), Event::LocalRadioUpdate);
+    assert_eq!(snapshot.unwrap().radios[1].frequency_hz, 251e6);
+    assert_eq!(
+        read(&mut peer).await["Client"]["RadioInfo"]["radios"][1]["secFreq"],
+        242e6
+    );
+    let drive = async {
+        sleep(Duration::from_millis(300)).await;
+        session.next_event_with_updates(&mut updates).await
+    };
+    let (event, result) = tokio::join!(drive, control.apply(RadioChange::Disable { slot: 1 }));
+    assert_eq!(event.unwrap(), Event::LocalRadioUpdate);
+    assert!(matches!(result, Err(Error::Timeout)));
+    assert_eq!(session.radios()[1].modulation, Modulation::AM);
+    let (event, snapshot) = tokio::join!(
+        session.next_event_with_updates(&mut updates),
+        control.apply(RadioChange::Tune {
+            slot: 2,
+            hz: 124e6,
+            modulation: Modulation::AM
+        })
+    );
+    assert_eq!(event.unwrap(), Event::LocalRadioUpdate);
+    assert_eq!(snapshot.unwrap().radios[2].frequency_hz, 124e6);
+    assert_eq!(
+        read(&mut peer).await["Client"]["RadioInfo"]["radios"][2]["freq"],
+        124e6
+    );
+}

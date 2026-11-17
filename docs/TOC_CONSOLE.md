@@ -1,6 +1,6 @@
 # Integrated desktop TOC development console
 
-`srs-toc` connects an authenticated SRS session to capture, Opus, UDP, receive policy/jitter, a bounded mono mix, and playback. `toc_console` is an interactive development tool with **timed transmit commands**, not held-key/global/hardware PTT. Physical headset listening and stock desktop-client exchange remain pending. There is no installer or mobile UI yet.
+`srs-toc` connects an authenticated SRS session to capture, Opus, UDP, receive policy/jitter, a bounded mono mix, and playback. `toc_console` is an interactive development tool with default timed transmit commands, live radio edits, and opt-in [foreground held-key PTT](KEYBOARD.md). Global/HID PTT remains pending. Physical headset listening and stock desktop-client exchange remain pending. There is no installer or mobile UI yet.
 
 ## Build and explicit use
 
@@ -33,7 +33,7 @@ Wait for `RX READY`, then enter commands:
 | `rx` | Release transmit early; keep receiving |
 | `quit` | Close the session and devices |
 
-`TX LOCAL` means the local transmit gate is open; SRS does not acknowledge voice delivery. The console displays a separate `RX READY`/`STOPPED` state. AM/FM and one fixed radio are exposed; guard, tuning changes, keys, presets and multiple UI radio controls remain future console/UI work. The shared receive engine can mix up to 16 eligible speakers. Use headphones to avoid feedback. Microphone capture remains open during the session but its callback discards samples while PTT is released.
+`TX LOCAL` means the local transmit gate is open; SRS does not acknowledge voice delivery. The console displays a separate `RX READY`/`STOPPED` state. Timed-mode `tune`, `guard`, `key`, `off` and `select` commands now edit/select slots 1–10; see [radio commands](KEYBOARD.md). Saved presets and graphical radio controls remain pending. The shared receive engine can mix up to 16 eligible speakers. Use headphones to avoid feedback. Microphone capture remains open during the session but its callback discards samples while PTT is released.
 
 EOF, input-reader failure, line/queue overflow, the session duration limit, and `quit` stop the worker. `Ctrl+C` or terminal termination exits the process and the OS closes sockets/devices. There is no persistent transmitter or automatic reconnect. Commands are limited to 128 bytes and eight queued entries; queued commands older than 250 ms release PTT instead of replaying old input. The console has one blocking stdin reader thread; it exits on EOF, and process termination handles a pending read.
 
@@ -62,4 +62,6 @@ A local Linux x86-64 debug run delivered 25 frames each way, produced 27 mixed f
 
 The runner also launches the actual console with a process-local ALSA configuration containing only a null PCM and synthetic credentials. It checks receive-only startup, timed TX release, explicit `rx`, `quit`, native stream lifetime, and a nonzero transmitted frame count. The helper `scripts/test_toc_console.py` is invoked inside that runner; it is not a standalone command. Null PCM is unpaced, so these checks do not establish native latency or audio quality.
 
-Physical follow-up: use two authorized SRS endpoints and selected headsets, verify intelligibility both ways, timed TX ending and early `rx`, then interrupt input, disconnect TCP, revoke coalition access and unplug each active device. Confirm local TX stops, old audio does not replay, and reopening needs explicit action. Record Windows/Linux OS, device format, listening/delay observations, counters and failures. Global keyboard/HID hold-to-talk, physical headset checks, full stock desktop-client exchange, UI and Android/iOS lifecycle behavior remain pending.
+Physical follow-up: use two authorized SRS endpoints and selected headsets, verify intelligibility both ways, timed TX ending and early `rx`, then interrupt input, disconnect TCP, revoke coalition access and unplug each active device. Confirm local TX stops, old audio does not replay, and reopening needs explicit action. Record Windows/Linux OS, device format, listening/delay observations, counters and failures. Global keyboard/HID PTT, physical headset checks, full stock desktop-client exchange, UI and Android/iOS lifecycle behavior remain pending.
+
+Foreground keyboard mode has a release-event calibration, focus/cancellation rules and a per-press hold cap; see [keyboard contract and validation](KEYBOARD.md). Live edits use a bounded control queue and preserve partially received TCP frames.

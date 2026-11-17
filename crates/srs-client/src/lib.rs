@@ -7,6 +7,7 @@
 //! automatic reconnect. Dropping a session closes TCP. Cancelling a pending
 //! public async operation also closes TCP; reconnect with a new session.
 
+pub mod commands;
 mod model;
 pub mod receive;
 mod transport;
@@ -110,6 +111,8 @@ pub enum Event {
     ClientDisconnected(ClientId),
     SettingsUpdated,
     RadiosAdjusted,
+    /// A local edit was processed; its reply carries success or validation error.
+    LocalRadioUpdate,
     EamDisabled,
     Ignored(MessageType),
 }
@@ -328,13 +331,29 @@ impl Session {
         if self.transport.is_none() {
             return Err(Error::Disconnected);
         }
+        self.validate_update(&radios)?;
+        let mut transport = self.transport.take().ok_or(Error::Disconnected)?;
+        self.write_radios(&mut transport, radios).await?;
+        self.transport = Some(transport);
+        Ok(())
+    }
+
+    fn validate_update(&self, radios: &[Radio; RADIO_COUNT]) -> Result<(), Error> {
         if self.coalition.is_none() {
             return Err(Error::NotAuthenticated);
         }
         if !self.setting_bool("EXTERNAL_AWACS_MODE", false)? {
             return Err(Error::EamDisabled);
         }
-        self.validate_radios(&radios)?;
+        self.validate_radios(radios)?;
+        Ok(())
+    }
+
+    async fn write_radios(
+        &mut self,
+        transport: &mut Transport,
+        radios: [Radio; RADIO_COUNT],
+    ) -> Result<(), Error> {
         let mut message = self.message(MessageType::RADIO_UPDATE);
         message.client = Some(model::client_wire(&self.identity, self.coalition, &radios));
         // Retuning releases held PTT before a slow control write can wait.
@@ -343,12 +362,10 @@ impl Session {
             authorization.channels = [None; RADIO_COUNT];
             authorization.receive = None;
         });
-        let mut transport = self.transport.take().ok_or(Error::Disconnected)?;
         transport.send(&message).await?;
         self.radios = radios;
         self.publish_voice_authorization();
         self.refresh_at = Instant::now() + REFRESH_INTERVAL;
-        self.transport = Some(transport);
         Ok(())
     }
 
@@ -371,6 +388,22 @@ impl Session {
     /// Drive incoming state and 60-second radio refreshes. Idle servers need not
     /// send TCP pings. Callers must keep polling; cancellation closes the session.
     pub async fn next_event(&mut self) -> Result<Event, Error> {
+        self.drive(None).await
+    }
+
+    /// Like `next_event`, with bounded local edits selected against an internally
+    /// cancellation-safe read. Cancelling this outer method still closes TCP.
+    pub async fn next_event_with_updates(
+        &mut self,
+        updates: &mut commands::RadioUpdates,
+    ) -> Result<Event, Error> {
+        self.drive(Some(updates)).await
+    }
+
+    async fn drive(
+        &mut self,
+        mut updates: Option<&mut commands::RadioUpdates>,
+    ) -> Result<Event, Error> {
         let mut transport = self.transport.take().ok_or(Error::Disconnected)?;
         loop {
             if Instant::now() >= self.refresh_at {
@@ -379,25 +412,49 @@ impl Session {
                     .await?;
                 self.refresh_at = Instant::now() + REFRESH_INTERVAL;
             }
-            match timeout_at(self.refresh_at, transport.receive()).await {
-                Ok(message) => {
-                    let event = self.apply(message?)?;
-                    if event == Event::EamDisabled {
-                        // Revocation drops local authorization before any further await.
-                        transport
-                            .send(&self.message(MessageType::EXTERNAL_AWACS_MODE_DISCONNECT))
-                            .await?;
+            let message = tokio::select! {
+                biased;
+                _ = tokio::time::sleep_until(self.refresh_at) => continue,
+                message = transport.receive() => message,
+                request = async {
+                    match updates.as_mut() {
+                        Some(updates) => updates.0.recv().await,
+                        None => std::future::pending().await,
                     }
-                    if matches!(event, Event::EamDisabled | Event::RadiosAdjusted) {
-                        transport
-                            .send(&self.message(MessageType::RADIO_UPDATE))
-                            .await?;
+                } => {
+                    let Some(request) = request else { updates = None; continue; };
+                    if request.reply.is_closed() { continue; }
+                    let radios = if Instant::now() >= request.expires { Err(Error::Timeout) }
+                        else { self.edited_radios(request.change) };
+                    match radios {
+                        Err(error) => { let _ = request.reply.send(Err(error)); }
+                        Ok(radios) => {
+                            if let Err(error) = self.write_radios(&mut transport, radios).await {
+                                let _ = request.reply.send(Err(error));
+                                return Err(error);
+                            }
+                            let _ = request.reply.send(Ok(commands::RadioSnapshot { radios: self.radios.clone(), revision: self.voice_authorization.borrow().revision }));
+                        }
                     }
                     self.transport = Some(transport);
-                    return Ok(event);
-                }
-                Err(_) => continue,
+                    return Ok(Event::LocalRadioUpdate);
+                },
+            };
+
+            let event = self.apply(message?)?;
+            if event == Event::EamDisabled {
+                // Revocation drops local authorization before any further await.
+                transport
+                    .send(&self.message(MessageType::EXTERNAL_AWACS_MODE_DISCONNECT))
+                    .await?;
             }
+            if matches!(event, Event::EamDisabled | Event::RadiosAdjusted) {
+                transport
+                    .send(&self.message(MessageType::RADIO_UPDATE))
+                    .await?;
+            }
+            self.transport = Some(transport);
+            return Ok(event);
         }
     }
 

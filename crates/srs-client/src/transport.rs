@@ -61,8 +61,12 @@ impl Transport {
                     return Ok(message);
                 }
             }
+            // Keep the consumed range intact while read is pending. Resetting
+            // start before the await would replay the old buffer if a radio
+            // edit or refresh cancelled this read before new bytes arrived.
+            let count = self.socket.read(&mut self.buffer).await?;
             self.start = 0;
-            self.end = self.socket.read(&mut self.buffer).await?;
+            self.end = count;
             if self.end == 0 {
                 std::mem::take(&mut self.decoder).finish()?;
                 return Err(Error::Disconnected);
