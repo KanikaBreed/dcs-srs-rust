@@ -42,6 +42,8 @@ jobs:
           sudo apt-get install --yes --no-install-recommends libasound2-dev pkg-config libopus0 libxkbcommon-dev libxkbcommon-x11-dev libfontconfig1-dev libx11-xcb-dev libx11-dev libxcursor-dev xinput xvfb xauth x11-utils fonts-dejavu-core
       - name: Check documentation and Rust workspace
         run: python scripts/check.py
+      - name: Prepare native desktop validation build
+        run: python scripts/build_desktop.py --out .scratch/desktop-ci
       - name: Verify isolated native null audio
         if: matrix.os == 'ubuntu-latest'
         run: python scripts/test_null_audio.py

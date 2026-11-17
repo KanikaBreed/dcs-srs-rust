@@ -63,6 +63,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         Rc::new(VecModel::from(
             (0..10)
                 .map(|index| RadioRow {
+                    routing: if index == 1 {
+                        1
+                    } else if index == 2 {
+                        2
+                    } else {
+                        0
+                    },
                     volume: if index == 1 { 60 } else { 100 },
                     muted: index == 2,
                     rx: index == 1 && !tx,

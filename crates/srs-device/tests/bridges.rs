@@ -324,6 +324,20 @@ fn device_config_selection_has_no_silent_rate_or_channel_fallback() {
         (1, 48000, F::F32)
     );
     assert_eq!(output.channels(), 2);
+    // A higher-ranked mono sample format must not discard available stereo.
+    for stereo_format in [F::I16, F::U16] {
+        let output = choose_config(
+            [range(1, 48000, F::F32), range(2, 48000, stereo_format)].into_iter(),
+            Direction::Output,
+        )
+        .unwrap();
+        assert_eq!(
+            (output.channels(), output.sample_format()),
+            (2, stereo_format)
+        );
+    }
+    let mono = choose_config([range(1, 48000, F::F32)].into_iter(), Direction::Output).unwrap();
+    assert_eq!(mono.channels(), 1);
     assert!(
         choose_config(
             [
@@ -381,4 +395,51 @@ fn concurrent_producer_timestamps_newer_than_the_consumers_snapshot_are_fresh() 
     let mut pcm = [0.0f32; 480];
     output.process(&mut pcm, start);
     assert!(pcm.iter().all(|&s| s == 0.5));
+}
+
+#[test]
+fn stereo_interleaves_and_flushes_both_channels_without_callback_allocations() {
+    let start = Instant::now();
+    let (mut writer, mut output, _) = playback_bridge(2).unwrap();
+    assert_eq!(writer.channels(), 2);
+    writer
+        .enqueue_stereo(&[16384; OUTPUT_SAMPLES], &[-8192; OUTPUT_SAMPLES], start)
+        .unwrap();
+    let mut pcm = [0.0_f32; 222];
+    let allocation = allocation_counter::measure(|| output.process(&mut pcm, start));
+    assert_eq!(allocation.count_total, 0);
+    assert_eq!(allocation.bytes_total, 0);
+    for &pair in pcm.as_chunks::<2>().0 {
+        assert_eq!(pair, [0.5, -0.25]);
+    }
+    writer.flush().unwrap();
+    output.process(&mut pcm, start);
+    assert!(pcm.iter().all(|s| *s == 0.0));
+    writer
+        .enqueue_stereo(&[0; OUTPUT_SAMPLES], &[16384; OUTPUT_SAMPLES], start)
+        .unwrap();
+    let mut pcm = [0_i16; 222];
+    output.process(&mut pcm, start);
+    for &pair in pcm.as_chunks::<2>().0 {
+        assert_eq!(pair, [0, 16384]);
+    }
+    output.process(&mut pcm, time(start, 80));
+    assert!(pcm.iter().all(|s| *s == 0), "stale stereo frame survived");
+}
+
+#[test]
+fn mono_bridge_preserves_mono_gain_and_averages_explicit_stereo_input() {
+    let start = Instant::now();
+    let (mut writer, mut output, _) = playback_bridge(1).unwrap();
+    assert_eq!(writer.channels(), 1);
+    writer.enqueue(&[16384; OUTPUT_SAMPLES], start).unwrap();
+    let mut pcm = [0_f32; 120];
+    output.process(&mut pcm, start);
+    assert!(pcm.iter().all(|s| *s == 0.5));
+    writer.flush().unwrap();
+    writer
+        .enqueue_stereo(&[16384; OUTPUT_SAMPLES], &[-8192; OUTPUT_SAMPLES], start)
+        .unwrap();
+    output.process(&mut pcm, start);
+    assert!(pcm.iter().all(|s| *s == 0.125));
 }

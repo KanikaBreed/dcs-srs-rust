@@ -80,7 +80,12 @@ pub fn choose_config(
                 SampleFormat::I16 => 2,
                 _ => 0,
             };
-            format + u8::from(r.channels() == preferred_channels)
+            // Playback must preserve headphone routing when any supported stereo
+            // format exists. Capture retains its format-first selection policy.
+            (
+                u8::from(matches!(direction, Direction::Output) && r.channels() == 2),
+                format + u8::from(r.channels() == preferred_channels),
+            )
         })
         .ok_or(Error::UnsupportedConfig)
 }

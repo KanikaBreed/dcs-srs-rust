@@ -18,25 +18,47 @@ use tokio::time::Instant;
 pub const MAX_SPEAKERS: usize = 16;
 pub const MAX_GLOBAL_FREQUENCIES: usize = 64;
 const PACKET_MAX_AGE: Duration = Duration::from_millis(120);
+/// Discrete local headphone routing. Both preserves full gain in each channel.
+/// Mono playout ignores routing so all radios retain their existing mono level.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Routing {
+    #[default]
+    Both,
+    Left,
+    Right,
+}
 /// Local receive level only; never serialized onto the SRS control/voice wire.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RadioLevel {
     percent: u8,
     muted: bool,
+    routing: Routing,
 }
 impl RadioLevel {
     pub const FULL: Self = Self {
         percent: 100,
         muted: false,
+        routing: Routing::Both,
     };
     pub fn new(percent: u8, muted: bool) -> Option<Self> {
-        (percent <= 100).then_some(Self { percent, muted })
+        (percent <= 100).then_some(Self {
+            percent,
+            muted,
+            routing: Routing::Both,
+        })
     }
     pub fn percent(self) -> u8 {
         self.percent
     }
     pub fn muted(self) -> bool {
         self.muted
+    }
+    pub const fn with_routing(mut self, routing: Routing) -> Self {
+        self.routing = routing;
+        self
+    }
+    pub const fn routing(self) -> Routing {
+        self.routing
     }
     fn gain(self) -> i32 {
         if self.muted {
@@ -189,12 +211,26 @@ impl VoiceConnection {
     /// Worker-only 40 ms mono mix: at most one due frame per original speaker.
     /// Per-radio 0–100% gain, integer sum and final saturation; no speaker backlog.
     /// Call on a 40 ms cadence. Each speaker retains its own decoder and PLC.
-    /// This initial mix does not implement upstream radio effects or panning.
+    /// Mono output preserves the level of every radio, ignoring headphone routing.
     pub fn poll_mix(&mut self, pcm: &mut [i16; OUTPUT_SAMPLES]) -> Result<Mix, VoiceError> {
-        pcm.fill(0);
+        self.mix_channels(std::array::from_mut(pcm))
+    }
+    /// Planar stereo output. Both routes at full gain to each ear; Left/Right
+    /// route only to that ear. This is discrete routing, not upstream's continuous
+    /// half-gain-center balance law. Decoding and RX accounting happen once.
+    pub fn poll_stereo(&mut self, pcm: &mut [[i16; OUTPUT_SAMPLES]; 2]) -> Result<Mix, VoiceError> {
+        self.mix_channels(pcm)
+    }
+    fn mix_channels<const CHANNELS: usize>(
+        &mut self,
+        pcm: &mut [[i16; OUTPUT_SAMPLES]; CHANNELS],
+    ) -> Result<Mix, VoiceError> {
+        for channel in pcm.iter_mut() {
+            channel.fill(0);
+        }
         self.sync_receive()?;
         let now = Instant::now().duration_since(self.receive.origin);
-        let mut sum = [0i32; OUTPUT_SAMPLES];
+        let mut sum = [[0i32; OUTPUT_SAMPLES]; CHANNELS];
         let mut decoded = [0; OUTPUT_SAMPLES];
         let mut mix = Mix::default();
         for stream in &mut self.receive.streams {
@@ -204,21 +240,32 @@ impl VoiceConnection {
                 .map_err(VoiceError::Codec)?
             {
                 mix.speakers += 1;
-                let gain = self.receive.monitor[frame.metadata.radio].gain();
+                let level = self.receive.monitor[frame.metadata.radio];
+                let gain = level.gain();
                 mix.audible_speakers += usize::from(gain > 0);
                 if frame.kind == FrameKind::Decoded {
                     mix.received_radios |= 1 << frame.metadata.radio;
                 }
-                for (total, sample) in sum.iter_mut().zip(decoded) {
-                    *total += i32::from(sample) * gain;
+                for (channel, sum) in sum.iter_mut().enumerate() {
+                    if CHANNELS == 1
+                        || level.routing == Routing::Both
+                        || (channel == 0 && level.routing == Routing::Left)
+                        || (channel == 1 && level.routing == Routing::Right)
+                    {
+                        for (total, sample) in sum.iter_mut().zip(decoded) {
+                            *total += i32::from(sample) * gain;
+                        }
+                    }
                 }
             }
         }
-        for (output, total) in pcm.iter_mut().zip(sum) {
-            let total = total / 100;
-            let limited = total.clamp(i16::MIN as i32, i16::MAX as i32);
-            mix.clipped_samples += usize::from(limited != total);
-            *output = limited as i16;
+        for (output, sum) in pcm.iter_mut().zip(sum) {
+            for (output, total) in output.iter_mut().zip(sum) {
+                let total = total / 100;
+                let limited = total.clamp(i16::MIN as i32, i16::MAX as i32);
+                mix.clipped_samples += usize::from(limited != total);
+                *output = limited as i16;
+            }
         }
         Ok(mix)
     }

@@ -12,7 +12,7 @@ use slint::winit_030::{
     winit::event::{ElementState, WindowEvent},
 };
 use slint::{ComponentHandle, ModelRc, SharedString, Timer, TimerMode, VecModel};
-use srs_client::receive::{DEFAULT_MONITOR, Monitor, RadioLevel};
+use srs_client::receive::{DEFAULT_MONITOR, Monitor, RadioLevel, Routing};
 use srs_client::{
     RADIO_COUNT, Radio,
     commands::{RadioChange, RadioEdit},
@@ -70,6 +70,7 @@ fn rows(
             .enumerate()
             .map(|(index, radio)| RadioRow {
                 volume: monitor[index + 1].percent() as i32,
+                routing: monitor[index + 1].routing() as i32,
                 muted: monitor[index + 1].muted(),
                 rx: rx[index + 1],
                 name: radio.name.as_str().into(),
@@ -282,13 +283,35 @@ impl App {
         let Some(radio) = self.monitor.get_mut(ui.get_selected() as usize) else {
             return;
         };
-        *radio = level;
+        *radio = level.with_routing(radio.routing());
         if let Some(handle) = &self.handle {
             handle.monitor.send_replace(self.monitor);
         }
         self.refresh_rows(ui);
         ui.set_volume(volume as f32);
         ui.set_muted(muted);
+    }
+
+    fn edit_routing(&mut self, ui: &MainWindow, routing: i32) {
+        self.invalidate(ui);
+        if self.pending.is_some() || (self.handle.is_some() && !ui.get_ready()) {
+            return;
+        }
+        let routing = match routing {
+            0 => Routing::Both,
+            1 => Routing::Left,
+            2 => Routing::Right,
+            _ => return,
+        };
+        let Some(level) = self.monitor.get_mut(ui.get_selected() as usize) else {
+            return;
+        };
+        *level = level.with_routing(routing);
+        if let Some(handle) = &self.handle {
+            handle.monitor.send_replace(self.monitor);
+        }
+        self.refresh_rows(ui);
+        ui.set_routing(routing as i32);
     }
 
     fn publish(&self, ui: &MainWindow) {
@@ -338,6 +361,7 @@ impl App {
             let level = self.monitor[ui.get_selected() as usize];
             ui.set_volume(level.percent() as f32);
             ui.set_muted(level.muted());
+            ui.set_routing(level.routing() as i32);
             ui.set_modulation(i32::from(radio.modulation == Modulation::FM));
         }
     }
@@ -881,6 +905,9 @@ fn setup(profile_path: Option<std::path::PathBuf>) -> Result<Application, slint:
             state.editor(&window);
         }
     });
+    callback!(on_edit_routing, |state, window, routing| {
+        state.edit_routing(&window, routing);
+    });
     callback!(on_edit_monitor, |state, window, volume, muted| {
         state.edit_monitor(&window, volume, muted);
     });
@@ -1262,6 +1289,7 @@ mod tests {
                     ui.set_key("7".into());
                     ui.invoke_edit_radio(2);
                     ui.invoke_edit_monitor(35, true);
+                    ui.invoke_edit_routing(2);
                     ui.set_preset_name("TOC training".into());
                     ui.invoke_profile_action(3);
                     *step = 14;
@@ -1286,7 +1314,9 @@ mod tests {
                     assert!(ui.get_muted());
                     assert_eq!(
                         state.borrow().monitor[2],
-                        RadioLevel::new(35, true).unwrap()
+                        RadioLevel::new(35, true)
+                            .unwrap()
+                            .with_routing(Routing::Right)
                     );
                     ui.set_password("fixture-blue".into());
                     ui.invoke_connect_requested();
@@ -1397,7 +1427,9 @@ mod tests {
                             .view
                             .borrow()
                             .monitor[2],
-                        RadioLevel::new(35, true).unwrap(),
+                        RadioLevel::new(35, true)
+                            .unwrap()
+                            .with_routing(Routing::Right),
                         "stale GUI watch overwrote restored preset levels"
                     );
                     assert_eq!(state.borrow().radios[2].frequency_hz, 30.5e6);
@@ -1414,6 +1446,9 @@ mod tests {
                     *step = 34;
                 }
                 34 if ui.get_phase() == 3 => {
+                    ui.invoke_edit_routing(1);
+                    assert_eq!(ui.get_routing(), 1);
+                    assert!(state.borrow().ptt.intent(2, Instant::now()).radio.is_none());
                     ui.invoke_disconnect_requested();
                     *step = 35;
                 }

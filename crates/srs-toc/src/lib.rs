@@ -128,7 +128,7 @@ impl Worker<'_> {
         let playback_signal = self.playback.stop_signal();
         let mut encoder = Encoder::new()?;
         let mut encoded = [0; MAX_OPUS_BYTES];
-        let mut pcm = [0; OUTPUT_SAMPLES];
+        let mut pcm = [[0; OUTPUT_SAMPLES]; 2];
         // Ignore input already held when registration completes. Start receive-only.
         let mut generation = inputs.borrow_and_update().generation;
         let mut authorization = self
@@ -235,7 +235,12 @@ impl Worker<'_> {
                     mix_at = now + MIX_PERIOD;
                 }
                 let voice = self.voice.as_mut().ok_or(VoiceError::NotReady)?;
-                let mix = voice.poll_mix(&mut pcm)?;
+                let stereo = self.playback.channels() == 2;
+                let mix = if stereo {
+                    voice.poll_stereo(&mut pcm)?
+                } else {
+                    voice.poll_mix(&mut pcm[0])?
+                };
                 if voice.authorization_revision()? == authorization {
                     for (slot, count) in self.stats.received_frames.iter_mut().enumerate() {
                         if mix.received_radios & (1 << slot) != 0 {
@@ -244,7 +249,13 @@ impl Worker<'_> {
                     }
                 }
                 if voice.authorization_revision()? == authorization && mix.audible_speakers > 0 {
-                    match self.playback.enqueue(&pcm, now.into_std()) {
+                    let output = if stereo {
+                        self.playback
+                            .enqueue_stereo(&pcm[0], &pcm[1], now.into_std())
+                    } else {
+                        self.playback.enqueue(&pcm[0], now.into_std())
+                    };
+                    match output {
                         Ok(()) => {
                             self.stats.mixed_frames += 1;
                         }
