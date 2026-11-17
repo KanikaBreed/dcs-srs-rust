@@ -82,7 +82,10 @@ async fn next_playout(
             biased;
             _ = sleep_until(deadline) => {},
             event = voice.next_event() => if let VoiceEvent::Voice(packet) = event? {
-                check(matches!(voice.buffer_voice(&packet)?, QueueOutcome::Queued | QueueOutcome::Resynchronized), "voice rejected by receive policy")?;
+                let outcome = voice.buffer_voice(&packet)?;
+                if !matches!(outcome, QueueOutcome::Queued | QueueOutcome::Resynchronized) {
+                    return Err(format!("unexpected voice receive outcome: {outcome:?}").into());
+                }
             }
         }
     }

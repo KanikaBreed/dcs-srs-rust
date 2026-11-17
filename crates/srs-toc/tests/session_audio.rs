@@ -304,3 +304,111 @@ async fn tcp_loss_device_failure_and_future_cancellation_stop_capture_and_playba
         assert!(pcm.iter().all(|n| *n == 0.0));
     }
 }
+
+#[tokio::test]
+async fn retuning_held_transmit_requires_new_press_and_new_wire_channel() {
+    use srs_client::commands::RadioChange;
+    let mut h = Harness::new(false).await;
+    h.press().await;
+    h.feed(2).await;
+    let radios = h
+        .owner
+        .as_mut()
+        .unwrap()
+        .change_radio(RadioChange::Tune {
+            slot: 1,
+            hz: 252e6,
+            modulation: Modulation::FM,
+        })
+        .await
+        .unwrap();
+    assert_eq!(radios[1].frequency_hz, 252e6);
+    h.phase(Phase::Receiving).await;
+    h.feed(4).await;
+    let mut bytes = [0; 8192];
+    assert!(h.udp.try_recv_from(&mut bytes).is_err());
+    // Exercise an immediate press after another write acknowledgement; the
+    // worker must not swallow it while observing that local policy revision.
+    h.owner
+        .as_mut()
+        .unwrap()
+        .change_radio(RadioChange::Tune {
+            slot: 2,
+            hz: 253e6,
+            modulation: Modulation::AM,
+        })
+        .await
+        .unwrap();
+    h.owner.as_mut().unwrap().press(2).unwrap();
+    h.phase(Phase::Transmitting).await;
+    h.feed(4).await;
+    let bytes = h.packet().await;
+    let packet = VoicePacket::decode(&bytes).unwrap();
+    assert_eq!(packet.frequencies[0].hz, 253e6);
+    assert_eq!(packet.frequencies[0].modulation, Modulation::AM);
+    h.stop().await;
+}
+#[tokio::test]
+async fn cancelled_radio_edit_inhibits_press_until_a_new_edit_is_acknowledged() {
+    let (mut owner, _events) = srs_toc::controls();
+    let change = srs_client::commands::RadioChange::Disable { slot: 1 };
+    assert!(
+        timeout(Duration::from_millis(2), owner.change_radio(change))
+            .await
+            .is_err()
+    );
+    assert_eq!(owner.press(1), Err(Error::InvalidInput));
+    assert_eq!(owner.renew(), Err(Error::InputExpired));
+}
+
+#[tokio::test]
+async fn rejected_edit_does_not_clear_an_abandoned_edits_input_inhibition() {
+    use srs_client::commands::RadioChange;
+    let mut h = Harness::new(false).await;
+    send(
+        &mut h.tcp,
+        json!({"MsgType":4,"ServerSettings":{"ALLOW_RADIO_ENCRYPTION":"false"}}),
+    )
+    .await;
+    sleep(Duration::from_millis(20)).await;
+    // Poll the request once, then abandon it before the independent worker can
+    // run. This checks cancellation without depending on timer granularity.
+    let mut request = Box::pin(
+        h.owner
+            .as_mut()
+            .unwrap()
+            .change_radio(RadioChange::Disable { slot: 2 }),
+    );
+    std::future::poll_fn(|cx| {
+        assert!(request.as_mut().poll(cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+    drop(request);
+    assert!(matches!(
+        h.owner
+            .as_mut()
+            .unwrap()
+            .change_radio(RadioChange::Key {
+                slot: 1,
+                key: Some(7)
+            })
+            .await,
+        Err(Error::Control(srs_client::Error::PolicyDenied))
+    ));
+    assert_eq!(h.owner.as_mut().unwrap().press(1), Err(Error::InvalidInput));
+    h.owner
+        .as_mut()
+        .unwrap()
+        .change_radio(RadioChange::Tune {
+            slot: 1,
+            hz: 251e6,
+            modulation: Modulation::AM,
+        })
+        .await
+        .unwrap();
+    h.press().await;
+    h.feed(4).await;
+    h.packet().await;
+    h.stop().await;
+}

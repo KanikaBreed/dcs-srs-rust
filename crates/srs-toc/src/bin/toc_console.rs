@@ -1,4 +1,7 @@
-//! Explicit development console. Timed TX commands, not global/held-key PTT.
+//! Explicit development console with timed or foreground held-key PTT.
+#[path = "../console/keyboard.rs"]
+mod keyboard;
+use srs_client::commands::RadioChange;
 use srs_client::{Identity, Options, Radio, Session, disabled_radios};
 use srs_device::native::{Input, Output};
 use srs_protocol::voice::{ClientId, Modulation};
@@ -15,13 +18,14 @@ use tokio::{
 };
 
 const HELP: &str = "Usage:
-  toc_console --server <IP:port> --id <unique-22-character-SRS-ID> --name <callsign> --mhz <frequency> --mode <am|fm> --input <device-id|default> --output <device-id|default> --seconds <1..3600>
+  toc_console --server <IP:port> --id <unique-22-character-SRS-ID> --name <callsign> --mhz <frequency> --mode <am|fm> --input <device-id|default> --output <device-id|default> --seconds <1..3600> [--ptt <timed|keyboard>]
 
 Requires SRS_EAM_PASSWORD in this process's environment. Never pass it as an argument.
 This explicitly opens the selected microphone/output and connects to the selected server.
-Commands (Enter to submit): tx <100..5000 milliseconds>, rx, quit.
+Timed-mode commands: tx <100..5000 milliseconds>, rx, select <1..10>, tune <slot> <MHz> <am|fm>, guard <slot> <MHz|off>, key <slot> <1..255|off>, off <slot>, quit.
+Keyboard mode: tap/release F8 to arm, then hold F8 (maximum 5s); 1-9/0 select, f tunes, m changes modulation, x disables, q quits.
 TX is a bounded microphone transmission; rx releases it early. Use headphones.
-This development console has no global/held-key PTT, automatic reconnect, or recording.
+Keyboard mode requires key-release reporting and remains foreground-only. No global/HID PTT, automatic reconnect, or recording.
 Startup/help opens no devices or sockets. Only connect to servers you may use.";
 struct Config {
     address: SocketAddr,
@@ -32,6 +36,7 @@ struct Config {
     input: String,
     output: String,
     seconds: u64,
+    keyboard: bool,
 }
 fn parse(args: &[String]) -> Result<Config, &'static str> {
     let (pairs, remainder) = args.as_chunks::<2>();
@@ -49,6 +54,7 @@ fn parse(args: &[String]) -> Result<Config, &'static str> {
             "--input",
             "--output",
             "--seconds",
+            "--ptt",
         ]
         .contains(&key.as_str())
             || values.insert(key.as_str(), value.as_str()).is_some()
@@ -85,15 +91,31 @@ fn parse(args: &[String]) -> Result<Config, &'static str> {
         input: get("--input")?.to_owned(),
         output: get("--output")?.to_owned(),
         seconds,
+        keyboard: match values.get("--ptt").copied().unwrap_or("timed") {
+            "timed" => false,
+            "keyboard" => true,
+            _ => return Err("ptt must be timed or keyboard"),
+        },
     })
 }
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Command {
     Tx(Duration),
     Rx,
     Quit,
+    Select(usize),
+    Change(RadioChange),
 }
 fn command(line: &str) -> Option<Command> {
+    fn slot(word: &str) -> Option<usize> {
+        word.parse().ok().filter(|s| (1..=10).contains(s))
+    }
+    fn hz(word: &str) -> Option<f64> {
+        word.parse::<f64>()
+            .ok()
+            .map(|n| n * 1e6)
+            .filter(|n| n.is_finite() && (10_001.0..=10e9).contains(n))
+    }
     let mut words = line.split_whitespace();
     let result = match words.next()? {
         "tx" => {
@@ -103,6 +125,33 @@ fn command(line: &str) -> Option<Command> {
             }
             Command::Tx(Duration::from_millis(ms))
         }
+        "select" => Command::Select(slot(words.next()?)?),
+        "tune" => Command::Change(RadioChange::Tune {
+            slot: slot(words.next()?)?,
+            hz: hz(words.next()?)?,
+            modulation: match words.next()? {
+                "am" => Modulation::AM,
+                "fm" => Modulation::FM,
+                _ => return None,
+            },
+        }),
+        "guard" => Command::Change(RadioChange::Guard {
+            slot: slot(words.next()?)?,
+            hz: match words.next()? {
+                "off" => 1.0,
+                value => hz(value)?,
+            },
+        }),
+        "key" => Command::Change(RadioChange::Key {
+            slot: slot(words.next()?)?,
+            key: match words.next()? {
+                "off" => None,
+                value => Some(value.parse::<u8>().ok().filter(|v| *v > 0)?),
+            },
+        }),
+        "off" => Command::Change(RadioChange::Disable {
+            slot: slot(words.next()?)?,
+        }),
         "rx" => Command::Rx,
         "quit" => Command::Quit,
         _ => return None,
@@ -110,8 +159,27 @@ fn command(line: &str) -> Option<Command> {
     words.next().is_none().then_some(result)
 }
 fn announce(message: &str) -> io::Result<()> {
-    println!("{message}");
+    if matches!(crossterm::terminal::is_raw_mode_enabled(), Ok(true)) {
+        print!("\r{message}\r\n");
+    } else {
+        println!("{message}");
+    }
     io::stdout().flush()
+}
+fn show_radio(slot: usize, radio: &Radio) -> io::Result<()> {
+    let mode = match radio.modulation {
+        Modulation::AM => "AM",
+        Modulation::FM => "FM",
+        _ => "OFF",
+    };
+    announce(&format!(
+        "RADIO {slot}: {:.6} MHz {mode}; guard {:.6} MHz; key {}",
+        radio.frequency_hz / 1e6,
+        radio.guard_hz / 1e6,
+        radio
+            .encryption_key
+            .map_or_else(|| "off".to_owned(), |k| k.to_string())
+    ))
 }
 // One blocking stdin reader, never an audio callback. Bounded lines and queue;
 // EOF/error/overflow signals immediate owner loss. No queued action is replayed.
@@ -127,7 +195,9 @@ fn stdin_commands() -> (mpsc::Receiver<(Instant, Command)>, watch::Receiver<bool
                 let parsed = std::str::from_utf8(&line).ok().and_then(command);
                 line.clear();
                 let Some(command) = parsed else {
-                    eprintln!("Use tx <100..5000>, rx, or quit.");
+                    eprintln!(
+                        "Invalid command; see --help for TX, tuning, guard, key and selection commands."
+                    );
                     continue;
                 };
                 if sender.try_send((Instant::now(), command)).is_err() {
@@ -151,8 +221,11 @@ async fn operate(
     mut owner: Controller,
     mut status: watch::Receiver<Status>,
     seconds: u64,
+    mut radios: [Radio; srs_client::RADIO_COUNT],
 ) -> Result<(), Box<dyn Error>> {
     let (mut commands, mut alive) = stdin_commands();
+    let mut selected = 1;
+    show_radio(selected, &radios[selected])?;
     let end = Instant::now() + Duration::from_secs(seconds);
     let mut ticker = interval(Duration::from_millis(100));
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -189,10 +262,19 @@ async fn operate(
                 match action {
                     Command::Quit => return Ok(()),
                     Command::Rx => { owner.release()?; transmit_until = None; }
-                    Command::Tx(duration) if matches!(phase, Phase::Receiving | Phase::Transmitting) => {
-                        owner.press(1)?; transmit_until = Some(Instant::now() + duration);
+                    Command::Tx(duration) if matches!(phase, Phase::Receiving | Phase::Transmitting) && radios[selected].frequency_hz > 10_000.0 && radios[selected].modulation != Modulation::DISABLED => {
+                        owner.press(selected)?; transmit_until = Some(Instant::now() + duration);
                     },
-                    Command::Tx(_) => eprintln!("Wait for RX READY before transmitting."),
+                    Command::Tx(_) => eprintln!("Wait for RX READY and select an enabled radio before transmitting."),
+                    Command::Select(slot) => { owner.release()?; transmit_until = None; selected = slot; show_radio(slot, &radios[slot])?; },
+                    Command::Change(change) => {
+                        transmit_until = None;
+                        match owner.change_radio(change).await {
+                            Ok(snapshot) => { radios = snapshot; for (slot, radio) in radios.iter().enumerate().skip(1) { show_radio(slot, radio)?; } },
+                            Err(srs_toc::Error::Control(srs_client::Error::InvalidRadio | srs_client::Error::PolicyDenied)) => announce("RADIO UPDATE REJECTED: invalid settings or server policy.")?,
+                            Err(error) => return Err(error.into()),
+                        }
+                    },
                 }
             },
             _ = ticker.tick() => if let Some(until) = transmit_until
@@ -211,6 +293,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
     let config = parse(&args).map_err(io::Error::other)?;
     let password = std::env::var("SRS_EAM_PASSWORD").map_err(|_| "SRS_EAM_PASSWORD is required")?;
+    let _terminal = if config.keyboard {
+        Some(keyboard::TerminalGuard::open()?)
+    } else {
+        None
+    };
     announce("CONNECT: opening the selected SRS session. Audio will start after authentication.")?;
     let mut session = Session::connect(
         config.address,
@@ -222,7 +309,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     drop(password);
     let mut radios = disabled_radios();
     radios[1] = Radio::tuned(config.hz, config.mode);
-    session.set_radios(radios).await?;
+    session.set_radios(radios.clone()).await?;
     announce(
         "AUDIO: opening the selected microphone/output. Starting receive-only. Commands: tx <100..5000>, rx, quit.",
     )?;
@@ -237,7 +324,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // bridges/PTT on cancellation. Native owners then close their streams.
     let result: Result<(), Box<dyn Error>> = tokio::select! {
         result = srs_toc::run(session, input.reader(), output.writer(), inputs, status) => result.map(|_| ()).map_err(Into::into),
-        result = operate(owner, observed, config.seconds) => result,
+        result = async {
+            if config.keyboard { keyboard::operate(owner, observed, config.seconds, radios).await }
+            else { operate(owner, observed, config.seconds, radios).await }
+        } => result,
     };
     let stats = *snapshot.borrow();
     drop(input);

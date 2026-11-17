@@ -1,5 +1,6 @@
 //! Desktop session orchestration. Native callbacks remain in srs-device; all
 //! codecs, control/network I/O and mixing run here, outside device callbacks.
+pub mod held;
 mod input;
 pub use input::{Controller, INPUT_LEASE, InputEvents, controls};
 use srs_audio::{Encoder, MAX_OPUS_BYTES, OUTPUT_SAMPLES};
@@ -114,7 +115,7 @@ impl Worker<'_> {
     }
     async fn drive(
         &mut self,
-        mut inputs: InputEvents,
+        mut inputs: watch::Receiver<input::Intent>,
         mut departed: mpsc::Receiver<ClientId>,
     ) -> Result<Status, Error> {
         let capture_signal = self.capture.stop_signal();
@@ -123,7 +124,7 @@ impl Worker<'_> {
         let mut encoded = [0; MAX_OPUS_BYTES];
         let mut pcm = [0; OUTPUT_SAMPLES];
         // Ignore input already held when registration completes. Start receive-only.
-        let mut generation = inputs.0.borrow_and_update().generation;
+        let mut generation = inputs.borrow_and_update().generation;
         let mut authorization = self
             .voice
             .as_ref()
@@ -134,7 +135,7 @@ impl Worker<'_> {
         let mut mix_at = Instant::now();
         self.release()?;
         loop {
-            if inputs.0.has_changed().is_err() {
+            if inputs.has_changed().is_err() {
                 return Ok(self.stats);
             }
             if capture_signal.is_stopped() || playback_signal.is_stopped() {
@@ -149,9 +150,14 @@ impl Worker<'_> {
                 authorization = revision;
                 self.release()?;
                 // Renewing a held input cannot restart a policy-revoked transmit.
-                generation = inputs.0.borrow_and_update().generation;
+                let intent = *inputs.borrow_and_update();
+                // A press following an acknowledged local edit already names
+                // this exact revision. Do not swallow that new intentional press.
+                if intent.authorization != Some(revision) {
+                    generation = intent.generation;
+                }
             }
-            let intent = *inputs.0.borrow_and_update();
+            let intent = *inputs.borrow_and_update();
             let now = Instant::now();
             if intent.generation != generation {
                 generation = intent.generation;
@@ -228,7 +234,7 @@ impl Worker<'_> {
             let voice = self.voice.as_mut().ok_or(VoiceError::NotReady)?;
             tokio::select! {
                 biased;
-                _ = inputs.0.changed() => (),
+                _ = inputs.changed() => (),
                 peer = departed.recv() => match peer {
                     Some(peer) => { voice.forget_speaker(peer); self.playback.flush()?; }
                     None => return Err(VoiceError::ControlDisconnected.into()),
@@ -264,7 +270,7 @@ impl Drop for Worker<'_> {
 
 async fn send_current(
     voice: &mut VoiceConnection,
-    inputs: &mut InputEvents,
+    inputs: &mut watch::Receiver<input::Intent>,
     signals: (&StopSignal, &StopSignal),
     generation: u64,
     frame_expires: Instant,
@@ -278,10 +284,10 @@ async fn send_current(
         if signals.0.is_stopped() || signals.1.is_stopped() {
             return Err(srs_device::Error::Stopped.into());
         }
-        if inputs.0.has_changed().is_err() {
+        if inputs.has_changed().is_err() {
             return Ok(false);
         }
-        let intent = *inputs.0.borrow_and_update();
+        let intent = *inputs.borrow_and_update();
         let Some((_, until)) = intent.held.filter(|(_, until)| *until > Instant::now()) else {
             return Ok(false);
         };
@@ -290,7 +296,7 @@ async fn send_current(
         }
         tokio::select! {
             biased;
-            _ = inputs.0.changed() => (),
+            _ = inputs.changed() => (),
             _ = sleep_until(until.min(frame_expires)) => return Ok(false),
             _ = health.tick() => (),
             sent = &mut future => match sent {
@@ -301,9 +307,16 @@ async fn send_current(
         }
     }
 }
-async fn pump(mut session: Session, departed: mpsc::Sender<ClientId>) -> Result<(), Error> {
+async fn pump(
+    mut session: Session,
+    departed: mpsc::Sender<ClientId>,
+    mut updates: srs_client::commands::RadioUpdates,
+) -> Result<(), Error> {
     loop {
-        let event = session.next_event().await.map_err(Error::Control)?;
+        let event = session
+            .next_event_with_updates(&mut updates)
+            .await
+            .map_err(Error::Control)?;
         if event == Event::EamDisabled {
             return Err(Error::Control(srs_client::Error::EamDisabled));
         }
@@ -337,7 +350,7 @@ pub async fn run(
     let (sender, receiver) = mpsc::channel(32);
     tokio::select! {
         biased;
-        result = pump(session, sender) => { result?; Err(VoiceError::ControlDisconnected.into()) },
-        result = worker.drive(inputs, receiver) => result,
+        result = pump(session, sender, inputs.1) => { result?; Err(VoiceError::ControlDisconnected.into()) },
+        result = worker.drive(inputs.0, receiver) => result,
     }
 }

@@ -8,6 +8,7 @@ publish.workspace = true
 description = "Owned SRS session, audio worker, and explicit desktop TOC console"
 
 [dependencies]
+crossterm = { version = "0.29.0", default-features = false, features = ["events", "windows", "bracketed-paste"] }
 srs-audio = { path = "../srs-audio" }
 srs-client = { path = "../srs-client" }
 srs-device = { path = "../srs-device" }
