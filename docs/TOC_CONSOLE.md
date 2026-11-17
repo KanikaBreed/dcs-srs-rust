@@ -1,6 +1,6 @@
 # Integrated desktop TOC development console
 
-`srs-toc` connects an authenticated SRS session to capture, Opus, UDP, receive policy/jitter, a bounded mono mix, and playback. `toc_console` is an interactive development tool with default timed transmit commands, live radio edits, and opt-in [foreground held-key PTT](KEYBOARD.md). Global/HID PTT remains pending. Physical headset listening and stock desktop-client exchange remain pending. There is no installer or mobile UI yet.
+`srs-toc` connects an authenticated SRS session to capture, Opus, UDP, receive policy/jitter, a bounded mono/stereo mix, and playback. `toc_console` is an interactive development tool with default timed transmit commands, live radio edits, and opt-in [foreground held-key PTT](KEYBOARD.md). Global/HID PTT remains pending. Physical headset listening and stock desktop-client exchange remain pending. There is no installer or mobile UI yet.
 
 ## Build and explicit use
 
@@ -47,7 +47,7 @@ The worker checks input/device/authorization state every 5 ms while scheduled an
 
 The mixer polls at 40 ms intervals, taking at most one due frame per speaker. It applies local per-radio receive gains, sums in i32 and saturates once into i16; each speaker retains its own decoder/PLC. This adds up to one 40 ms alignment interval to the existing 80 ms jitter delay. A missed interval flushes downstream backlog instead of playing a catch-up burst. Output queue overflow discards its backlog and is counted. Disconnect/policy/PTT transitions flush partial playback conservatively; hardware samples already submitted cannot be recalled. Peer disconnects remove that speaker's sequence/decoder state and flush the device queue. At most 32 peer-departure events are queued; overload closes the control session instead of retaining stale audio.
 
-This mono mixer defaults to full gain and can clip simultaneous loud voices; the counter reports clipping. Limiting, per-radio panning, smooth gain ramps, effects, adaptive clock drift, 44.1 kHz devices, capture hotplug recovery and sustained-load/WAN behavior need further work. Neither a native error callback nor a software timer establishes physical device audibility.
+This mixer defaults to full gain and can clip simultaneous loud voices; the counter reports clipping. Discrete per-radio Left/Right/Both routing is available through the desktop monitor controls; this console keeps Both. Limiting, continuous balance, smooth gain ramps, effects, adaptive clock drift, 44.1 kHz devices, capture hotplug recovery and sustained-load/WAN behavior need further work. Neither a native error callback nor a software timer establishes physical device audibility.
 
 ## Automated evidence and physical follow-up
 
