@@ -148,7 +148,10 @@ impl<'a> VoicePacket<'a> {
         let original_client_id = ClientId::from_bytes(&tail[13..35])?;
         let client_id = ClientId::from_bytes(&tail[35..57])?;
         let mut frequencies = Vec::with_capacity(freq_len / FREQUENCY_BYTES);
-        for entry in bytes[freq_start..tail_start].chunks_exact(FREQUENCY_BYTES) {
+        for entry in bytes[freq_start..tail_start]
+            .as_chunks::<FREQUENCY_BYTES>()
+            .0
+        {
             let frequency = Frequency {
                 hz: f64::from_le_bytes(
                     entry[..8]
