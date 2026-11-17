@@ -32,6 +32,8 @@ fn authorization() -> Authorization {
     }));
     auth
 }
+// Complete real UDP registration before pausing the clock for synthetic playout.
+// Virtual-time auto-advance can otherwise beat OS socket readiness.
 async fn registered() -> (
     VoiceConnection,
     UdpSocket,
@@ -297,10 +299,11 @@ fn update_policy(
     });
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn receive_gate_rejects_wrong_keys_and_modulation_but_allows_guard() {
     use crate::receive::QueueOutcome;
     let (mut voice, _server, _peer, auth, _live) = registered().await;
+    tokio::time::pause();
     let mut packet = audio_packet(&voice, 1);
     packet.frequencies[0].encryption = 8;
     assert_eq!(
@@ -338,9 +341,10 @@ async fn receive_gate_rejects_wrong_keys_and_modulation_but_allows_guard() {
     assert!(pcm.iter().any(|&x| x != 0));
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn tune_and_control_revocation_clear_queued_audio_before_playout() {
     let (mut voice, _server, _peer, auth, live) = registered().await;
+    tokio::time::pause();
     let packet = audio_packet(&voice, 1);
     voice.buffer_voice(&packet).unwrap();
     update_policy(&auth, |p| p.radios[1].frequency_hz = 305_000_000.0);
@@ -362,9 +366,10 @@ async fn tune_and_control_revocation_clear_queued_audio_before_playout() {
     assert!(pcm.iter().all(|&x| x == 0));
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn transmit_blocking_rechecks_backlog_and_global_exception() {
     let (mut voice, _server, _peer, auth, _live) = registered().await;
+    tokio::time::pause();
     update_policy(&auth, |p| p.irl_tx = true);
     voice.buffer_voice(&audio_packet(&voice, 1)).unwrap();
     voice.press_ptt(1).unwrap();
@@ -390,9 +395,10 @@ async fn transmit_blocking_rechecks_backlog_and_global_exception() {
     );
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn duplicate_relays_decode_once_and_delayed_handoff_is_discarded() {
     let (mut voice, _server, _peer, _auth, _live) = registered().await;
+    tokio::time::pause();
     let mut packet = audio_packet(&voice, 10);
     voice.buffer_voice(&packet).unwrap();
     packet.client_id = ClientId::from_bytes(b"CCCCCCCCCCCCCCCCCCCCCC").unwrap();
@@ -416,9 +422,10 @@ async fn duplicate_relays_decode_once_and_delayed_handoff_is_discarded() {
     );
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn speaker_capacity_rejects_newcomers_until_an_idle_slot_is_available() {
     let (mut voice, _server, _peer, _auth, _live) = registered().await;
+    tokio::time::pause();
     let mut packet = audio_packet(&voice, 1);
     for i in 0..crate::receive::MAX_SPEAKERS {
         let mut id = [b'A'; 22];
@@ -442,9 +449,10 @@ async fn speaker_capacity_rejects_newcomers_until_an_idle_slot_is_available() {
     ));
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn voice_timeout_and_close_never_return_queued_audio() {
     let (mut voice, _server, _peer, _auth, _live) = registered().await;
+    tokio::time::pause();
     voice.buffer_voice(&audio_packet(&voice, 1)).unwrap();
     tokio::time::advance(VOICE_TIMEOUT).await;
     let mut pcm = [99; srs_audio::OUTPUT_SAMPLES];
@@ -454,9 +462,10 @@ async fn voice_timeout_and_close_never_return_queued_audio() {
     assert_eq!(voice.audio_deadline(), Err(VoiceError::NotReady));
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn peer_disconnect_allows_sequence_restart_without_releasing_local_ptt() {
     let (mut voice, _server, _peer, _auth, _live) = registered().await;
+    tokio::time::pause();
     let mut packet = audio_packet(&voice, 1_000);
     voice.press_ptt(1).unwrap();
     voice.buffer_voice(&packet).unwrap();
@@ -470,9 +479,10 @@ async fn peer_disconnect_allows_sequence_restart_without_releasing_local_ptt() {
     );
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn mono_mix_sums_due_speakers_once_saturates_and_revokes_backlog() {
     let (mut voice, _server, _, auth, _live) = registered().await;
+    tokio::time::pause();
     let mut packet = audio_packet(&voice, 1);
     let mut decoder = srs_audio::Decoder::new().unwrap();
     let mut single = [0; srs_audio::OUTPUT_SAMPLES];
@@ -501,10 +511,11 @@ async fn mono_mix_sums_due_speakers_once_saturates_and_revokes_backlog() {
     assert!(output.iter().all(|x| *x == 0));
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn receive_levels_scale_each_radio_and_mute_keeps_decoders_and_rx_current() {
     use crate::receive::{DEFAULT_MONITOR, RadioLevel};
     let (mut voice, _server, _, auth, _live) = registered().await;
+    tokio::time::pause();
     update_policy(&auth, |p| {
         p.radios[2] = p.radios[1];
         p.radios[2].frequency_hz = 252e6;
@@ -580,10 +591,11 @@ async fn receive_levels_scale_each_radio_and_mute_keeps_decoders_and_rx_current(
     );
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn single_speaker_playout_applies_local_gain_and_keeps_muted_metadata() {
     use crate::receive::{DEFAULT_MONITOR, RadioLevel};
     let (mut voice, _server, _, _auth, _live) = registered().await;
+    tokio::time::pause();
     let mut levels = DEFAULT_MONITOR;
     levels[1] = RadioLevel::new(25, false).unwrap();
     voice.set_monitor(levels);
@@ -611,10 +623,11 @@ async fn single_speaker_playout_applies_local_gain_and_keeps_muted_metadata() {
     assert!(pcm.iter().all(|sample| *sample == 0));
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn stereo_routes_once_per_speaker_and_mono_preserves_all_radios() {
     use crate::receive::{DEFAULT_MONITOR, QueueOutcome, RadioLevel, Routing};
     let (mut voice, _server, _, auth, _live) = registered().await;
+    tokio::time::pause();
     update_policy(&auth, |p| {
         p.radios[2] = p.radios[1];
         p.radios[2].frequency_hz = 252e6;
@@ -678,9 +691,10 @@ async fn stereo_routes_once_per_speaker_and_mono_preserves_all_radios() {
     }
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn stereo_clips_each_channel_only_after_summing() {
     let (mut voice, _server, _, _auth, _live) = registered().await;
+    tokio::time::pause();
     let mut packet = audio_packet(&voice, 1);
     let mut expected = [0; srs_audio::OUTPUT_SAMPLES];
     srs_audio::Decoder::new()
