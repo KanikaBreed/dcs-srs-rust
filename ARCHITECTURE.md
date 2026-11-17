@@ -26,8 +26,8 @@ flowchart TB
 | `srs-client` (TCP/EAM/UDP implemented) | Control state, UDP transport, session-bound PTT and receive gating; reconnect planned | UI framework dependencies, audio devices, automatic playback |
 | `srs-audio` (Opus and jitter implemented) | Fixed-frame codec and bounded sequence/jitter/PLC; effects planned | Device handles, UI state mutation, unbounded buffering |
 | `srs-device` (desktop probe implemented) | Explicit native input/output, bounded callback queues, capture permits and conversion; hardware PTT and permissions/lifecycle adapters pending; session orchestration lives in srs-toc | Duplicated radio/protocol rules |
-| `srs-toc` (integrated worker/console) | Owned session/audio orchestration, input leases, mono mixing, live radio edits and timed/foreground keyboard console | Global/HID PTT, UI, reconnect and mobile lifecycle |
-| `srs-desktop` (desktop preview) | Slint connection/device controls, radio editors, saved servers/presets, foreground F8/pointer PTT, per-radio receive volume/mute/RX, bounded commands and status; mobile UI later | Codec and routing decisions in callbacks |
+| `srs-toc` (integrated worker/console) | Owned session/audio orchestration, input leases, mono/stereo mixing, live radio edits and timed/foreground keyboard console | Global/HID PTT, UI, reconnect and mobile lifecycle |
+| `srs-desktop` (desktop preview) | Slint setup menus, refreshed devices and hostname connections, saved servers/presets and radio-only transfers, configurable foreground function-key/pointer PTT, per-radio receive volume/mute/routing/RX, read-only session details and bounded opt-in recovery; mobile UI later | Codec and routing decisions in callbacks |
 | DCS adapter | Existing Lua export/update interfaces, later cockpit support | Rewriting every aircraft script at bootstrap |
 | Optional server/gateway | Later compatible Rust relay; separate iOS wake-up service if required | Dependency for the first desktop/Android client |
 
