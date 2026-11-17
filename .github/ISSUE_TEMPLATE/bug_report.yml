@@ -1,0 +1,33 @@
+name: Bug report
+description: Report a reproducible behavior or tooling problem.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Do not include passwords, private server addresses, full logs, or other users' recordings. This project is currently a scaffold."
+  - type: input
+    id: version
+    attributes:
+      label: Build or commit
+      description: Include the SRS server/client version if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Platform and audio/PTT setup
+      description: OS/device, headset route, PTT source, and foreground/background state.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps and expected/actual results
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Minimal redacted evidence
+      description: Small log excerpt or synthetic test reproduction; review before posting.

@@ -1,0 +1,13 @@
+[workspace]
+members = ["crates/srs-core"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-only"
+repository = "https://github.com/KanikaBreed/dcs-srs-rust"
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "forbid"

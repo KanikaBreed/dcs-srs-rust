@@ -1,0 +1,19 @@
+name: Feature request
+description: Propose a radio workflow or platform improvement.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Operator problem
+      description: Describe the task, platform, and what is difficult today.
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Desired behavior and acceptance
+      description: Include SRS compatibility expectations and how the result could be verified.
+    validations:
+      required: true

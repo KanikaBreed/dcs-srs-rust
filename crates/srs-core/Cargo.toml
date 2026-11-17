@@ -1,0 +1,11 @@
+[package]
+name = "srs-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Shared radio-domain foundation for DCS SRS Rust"
+
+[lints]
+workspace = true
