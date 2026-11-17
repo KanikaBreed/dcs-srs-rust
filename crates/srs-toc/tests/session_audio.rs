@@ -559,17 +559,23 @@ async fn monitor_mute_flushes_partial_playback_and_tracks_muted_rx_without_tcp_e
             .is_err(),
         "local monitor change wrote to TCP"
     );
+    let count = h.status.borrow().received_frames[1];
     h.owner.as_mut().unwrap().set_monitor(DEFAULT_MONITOR);
     h.remote_frame(1, b'D').await;
-    let count = h.status.borrow().received_frames[1];
+    // Unmuting may expose a remaining C concealment tail before D's new frame.
+    // Keep consuming 10 ms callbacks while D traverses its jitter delay, as a
+    // real output device does. One callback is not a promise of new voice.
     timeout(Duration::from_secs(3), async {
-        while h.status.borrow_and_update().received_frames[1] == count {
-            h.status.changed().await.unwrap();
+        loop {
+            h.output.process(&mut pcm, Instant::now().into_std());
+            if h.status.borrow().received_frames[1] > count && pcm.iter().any(|n| n.abs() > 0.05) {
+                break;
+            }
+            sleep(Duration::from_millis(10)).await;
         }
     })
     .await
     .unwrap();
-    h.output.process(&mut pcm, Instant::now().into_std());
-    assert!(pcm.iter().any(|n| n.abs() > 0.05));
+    assert_eq!(h.status.borrow().playback_overflows, 0);
     h.stop().await;
 }
