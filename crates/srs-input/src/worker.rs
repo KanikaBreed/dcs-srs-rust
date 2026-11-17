@@ -115,6 +115,7 @@ impl Publisher {
     pub fn devices(&mut self, devices: Vec<crate::Device>) {
         self.sender.send_modify(|s| s.devices = devices);
     }
+    #[cfg(target_os = "linux")]
     pub fn trigger(&mut self, trigger: &str) {
         self.sender
             .send_modify(|s| s.trigger = crate::clean(trigger));
