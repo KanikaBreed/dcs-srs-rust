@@ -68,7 +68,8 @@ def verify_desktop(address, test_binary):
         ], cwd=ROOT, env=env, check=True, timeout=45)
         print("PASS: desktop window/controller authenticated with stock SRS; disabled-radio start, "
               "generated stock-server RX/indicator, native null capture/TX, UI-stall release, stale-input rejection, pointer cancel, "
-              "tune/guard/key/off, hold cap and disconnect/join. No hardware.", flush=True)
+              "tune/guard/key/off, hold cap, saved server/preset reload, offline preparation, "
+              "reconnect, live preset release and disconnect/join. No hardware.", flush=True)
 
 
 if __name__ == "__main__":

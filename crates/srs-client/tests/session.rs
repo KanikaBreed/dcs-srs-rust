@@ -784,3 +784,44 @@ async fn abandoned_and_expired_radio_requests_do_not_replay_and_connection_survi
         124e6
     );
 }
+
+#[tokio::test]
+async fn rejected_complete_presets_leave_every_radio_and_tcp_stream_unchanged() {
+    use srs_client::commands::{RadioEdit, radio_controls};
+    let (mut session, mut peer) = editable_pair().await;
+    let (control, mut updates) = radio_controls();
+    send(
+        &mut peer,
+        json!({"MsgType":4,"ServerSettings":{"ALLOW_RADIO_ENCRYPTION":"false"}}),
+    )
+    .await;
+    session.next_event().await.unwrap();
+    let original = session.radios().clone();
+    for invalid_frequency in [true, false] {
+        let mut preset = original.clone();
+        preset[1] = Radio::tuned(252e6, Modulation::FM);
+        preset[10] = Radio::tuned(
+            if invalid_frequency { f64::NAN } else { 254e6 },
+            Modulation::AM,
+        );
+        if !invalid_frequency {
+            preset[10].encryption_key = Some(7);
+        }
+        let (event, result) = tokio::join!(
+            session.next_event_with_updates(&mut updates),
+            control.update(RadioEdit::Replace(Box::new(preset)))
+        );
+        assert_eq!(event.unwrap(), Event::LocalRadioUpdate);
+        assert!(matches!(
+            result,
+            Err(Error::InvalidRadio | Error::PolicyDenied)
+        ));
+        assert!(*session.radios() == original);
+        assert!(
+            timeout(Duration::from_millis(30), peer.fill_buf())
+                .await
+                .is_err()
+        );
+    }
+    assert_eq!(session.state(), State::Authenticated(Coalition::Blue));
+}

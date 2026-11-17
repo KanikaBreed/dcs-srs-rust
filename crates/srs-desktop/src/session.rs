@@ -3,7 +3,7 @@
 //! executes network/codec work. Passwords are never formatted or persisted.
 use crate::input::{Intent, Lease, Update};
 use srs_client::{
-    Identity, Options, RADIO_COUNT, Radio, Session, commands::RadioChange, disabled_radios,
+    Identity, Options, RADIO_COUNT, Radio, Session, commands::RadioEdit, disabled_radios,
 };
 use srs_device::native::{Input, Output};
 use srs_protocol::voice::{ClientId, Modulation};
@@ -15,7 +15,7 @@ use std::{
 };
 use tokio::sync::{mpsc, watch};
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(i32)]
 pub enum Problem {
     #[default]
@@ -32,6 +32,7 @@ pub enum Problem {
     Backlog,
     Identity,
     Frequency,
+    Profile,
 }
 pub struct Config {
     pub address: SocketAddr,
@@ -39,6 +40,7 @@ pub struct Config {
     pub password: String,
     pub input: String,
     pub output: String,
+    pub radios: [Radio; RADIO_COUNT],
 }
 impl Config {
     pub fn parse(
@@ -65,6 +67,7 @@ impl Config {
             password,
             input,
             output,
+            radios: disabled_radios(),
         })
     }
 }
@@ -114,7 +117,7 @@ impl Default for Snapshot {
 pub struct Edit {
     pub id: u64,
     pub at: Instant,
-    pub change: RadioChange,
+    pub change: RadioEdit,
 }
 pub struct Handle {
     stop: watch::Sender<bool>,
@@ -128,7 +131,10 @@ impl Handle {
         let (stop, stopped) = watch::channel(false);
         let (input, inputs) = watch::channel(initial);
         let (edits, requests) = mpsc::channel(1);
-        let (view, receiver) = watch::channel(Snapshot::default());
+        let (view, receiver) = watch::channel(Snapshot {
+            radios: config.radios.clone(),
+            ..Snapshot::default()
+        });
         let thread = std::thread::Builder::new()
             .name("srs-session".into())
             .spawn(move || {
@@ -199,9 +205,9 @@ async fn connected(
     let auth = session.authenticate(&config.password).await;
     config.password.clear();
     auth.map_err(|_| Problem::Authenticate)?;
-    // Start with every radio disabled. Explicit tuning is required before TX/RX.
+    // Validate the prepared radios against current server policy before audio opens.
     session
-        .set_radios(disabled_radios())
+        .set_radios(config.radios)
         .await
         .map_err(|_| Problem::Radio)?;
     let mut capture = Input::open(&config.input).map_err(|_| Problem::Device)?;
@@ -267,7 +273,7 @@ async fn connected(
                         continue;
                     }
                     view.send_modify(|s| { s.editing = true; s.problem = Problem::None; });
-                    let result = controller.change_radio(edit.change).await;
+                    let result = controller.edit_radios(edit.change).await;
                     // Any action held while an edit was in flight is consumed.
                     lease.update(*inputs.borrow_and_update(), false, Instant::now());
                     view.send_modify(|s| {

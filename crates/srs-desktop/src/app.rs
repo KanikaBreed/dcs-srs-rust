@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 use crate::{
     input::UiInput,
+    profiles::{self, Command, Data, Preset, Server, Worker},
     session::{Config, Edit, Handle, Problem, frequency},
     ui::{MainWindow, RadioRow, Strings},
 };
@@ -12,7 +13,11 @@ use slint::winit_030::{
     },
 };
 use slint::{ComponentHandle, ModelRc, SharedString, Timer, TimerMode, VecModel};
-use srs_client::{RADIO_COUNT, Radio, commands::RadioChange, disabled_radios};
+use srs_client::{
+    RADIO_COUNT, Radio,
+    commands::{RadioChange, RadioEdit},
+    disabled_radios,
+};
 use srs_device::native::{self, DeviceInfo, Direction};
 use srs_protocol::voice::Modulation;
 use srs_toc::{Phase, held::Input};
@@ -29,6 +34,10 @@ struct App {
     inputs: Vec<DeviceInfo>,
     outputs: Vec<DeviceInfo>,
     pending: Option<u64>,
+    pending_selection: Option<usize>,
+    storage: Option<Worker>,
+    storage_busy: bool,
+    profiles: Data,
     next_edit: u64,
     stopping: bool,
     last_problem: Problem,
@@ -40,6 +49,7 @@ fn rows(radios: &[Radio; RADIO_COUNT]) -> ModelRc<RadioRow> {
         radios[1..]
             .iter()
             .map(|radio| RadioRow {
+                name: radio.name.as_str().into(),
                 frequency: format!("{:.6}", radio.frequency_hz / 1e6).into(),
                 guard: if radio.guard_hz > 10_000.0 {
                     format!("{:.6}", radio.guard_hz / 1e6).into()
@@ -68,13 +78,46 @@ fn device_model(devices: &[DeviceInfo], default_label: SharedString) -> ModelRc<
     labels.extend(devices.iter().map(|device| device.name.as_str().into()));
     Rc::new(VecModel::from(labels)).into()
 }
-fn device_id(devices: &[DeviceInfo], index: i32) -> String {
+fn device_id(devices: &[DeviceInfo], index: i32) -> Result<String, Problem> {
+    if index == 0 {
+        return Ok("default".into());
+    }
     usize::try_from(index)
         .ok()
         .and_then(|i| i.checked_sub(1))
         .and_then(|i| devices.get(i))
         .map(|d| d.id.clone())
-        .unwrap_or_else(|| "default".into())
+        .ok_or(Problem::Device)
+}
+fn device_index(devices: &[DeviceInfo], id: &str) -> Option<i32> {
+    if id == "default" {
+        Some(0)
+    } else {
+        devices
+            .iter()
+            .position(|d| d.id == id)
+            .map(|i| i as i32 + 1)
+    }
+}
+fn restored_device(
+    devices: &[DeviceInfo],
+    id: &str,
+    ui: &MainWindow,
+) -> (ModelRc<SharedString>, i32) {
+    let strings = ui.global::<Strings>();
+    let mut labels = vec![strings.get_system_default()];
+    labels.extend(devices.iter().map(|d| d.name.as_str().into()));
+    let index = device_index(devices, id).unwrap_or_else(|| {
+        labels.push(strings.get_missing_device());
+        devices.len() as i32 + 1
+    });
+    (Rc::new(VecModel::from(labels)).into(), index)
+}
+fn names(values: impl Iterator<Item = String>) -> ModelRc<SharedString> {
+    Rc::new(VecModel::from(
+        values.map(SharedString::from).collect::<Vec<_>>(),
+    ))
+    .into()
 }
 impl App {
     fn publish(&self, ui: &MainWindow) {
@@ -116,6 +159,7 @@ impl App {
                     .unwrap_or_default()
                     .into(),
             );
+            ui.set_radio_name(radio.name.as_str().into());
             ui.set_modulation(i32::from(radio.modulation == Modulation::FM));
         }
     }
@@ -126,14 +170,8 @@ impl App {
         self.invalidate(ui);
         let password = ui.get_password().to_string();
         ui.set_password("".into());
-        let result = Config::parse(
-            &ui.get_server(),
-            &ui.get_callsign(),
-            password,
-            device_id(&self.inputs, ui.get_input_index()),
-            device_id(&self.outputs, ui.get_output_index()),
-        )
-        .and_then(|config| {
+        let result = self.config(ui, password).and_then(|mut config| {
+            config.radios = self.radios.clone();
             Handle::start(
                 config,
                 self.ptt.intent(ui.get_selected() as usize, Instant::now()),
@@ -146,7 +184,6 @@ impl App {
                 self.pending = None;
                 self.last_problem = Problem::None;
                 self.last_mixed = 0;
-                self.radios = disabled_radios();
                 ui.set_radios(rows(&self.radios));
                 ui.set_problem(0);
                 ui.set_busy(true);
@@ -168,7 +205,7 @@ impl App {
     }
     fn edit(&mut self, ui: &MainWindow, kind: i32) {
         self.invalidate(ui);
-        if self.pending.is_some() || !ui.get_ready() {
+        if self.pending.is_some() || (self.handle.is_some() && !ui.get_ready()) {
             return;
         }
         let slot = ui.get_selected() as usize;
@@ -207,9 +244,34 @@ impl App {
             3 => Ok(RadioChange::Disable { slot }),
             _ => Err(Problem::Radio),
         };
-        let result = change.and_then(|change| {
+        let change = if kind == 4 {
+            let name = ui.get_radio_name().trim().to_owned();
+            if name.len() > 64 || name.chars().any(char::is_control) {
+                Err(Problem::Profile)
+            } else {
+                Ok(RadioEdit::Name { slot, name })
+            }
+        } else {
+            change.map(RadioEdit::from)
+        };
+        let result = change.and_then(|change| self.apply_edit(ui, change, None));
+        ui.set_problem(result.err().unwrap_or(Problem::None) as i32);
+    }
+    fn apply_edit(
+        &mut self,
+        ui: &MainWindow,
+        change: RadioEdit,
+        selected: Option<usize>,
+    ) -> Result<(), Problem> {
+        self.invalidate(ui);
+        if self.pending.is_some() || self.stopping && self.handle.is_some() {
+            return Err(Problem::Backlog);
+        }
+        if let Some(handle) = &self.handle {
+            if !ui.get_ready() {
+                return Err(Problem::Session);
+            }
             self.next_edit += 1;
-            let handle = self.handle.as_ref().ok_or(Problem::Session)?;
             handle
                 .edits
                 .try_send(Edit {
@@ -219,12 +281,149 @@ impl App {
                 })
                 .map_err(|_| Problem::Backlog)?;
             self.pending = Some(self.next_edit);
-            Ok(())
-        });
+            self.pending_selection = selected;
+            ui.set_editing(true);
+        } else {
+            let radios = change.apply_to(&self.radios).map_err(|_| Problem::Radio)?;
+            Preset::new(
+                "validation",
+                selected.unwrap_or(ui.get_selected() as usize),
+                &radios,
+            )?;
+            self.radios = radios;
+            if let Some(selected) = selected {
+                ui.set_selected(selected as i32);
+            }
+            ui.set_radios(rows(&self.radios));
+            self.editor(ui);
+        }
+        Ok(())
+    }
+    fn config(&self, ui: &MainWindow, password: String) -> Result<Config, Problem> {
+        Config::parse(
+            &ui.get_server(),
+            &ui.get_callsign(),
+            password,
+            device_id(&self.inputs, ui.get_input_index())?,
+            device_id(&self.outputs, ui.get_output_index())?,
+        )
+    }
+    fn store_command(&mut self, ui: &MainWindow, command: Command) {
+        let result = self
+            .storage
+            .as_ref()
+            .ok_or(profiles::StoreError::Io)
+            .and_then(|worker| worker.send(command));
+        self.storage_busy = result.is_ok();
+        ui.set_storage_busy(self.storage_busy);
+        ui.set_storage_status(result.err().map_or(1, |e| e as i32));
+    }
+    fn profile_action(&mut self, ui: &MainWindow, action: i32) {
+        self.invalidate(ui);
+        if self.storage_busy || self.pending.is_some() {
+            return;
+        }
+        if action == 6 {
+            self.store_command(ui, Command::Reload);
+            return;
+        }
+        let result = self.profile_change(ui, action);
         ui.set_problem(result.err().unwrap_or(Problem::None) as i32);
-        ui.set_editing(self.pending.is_some());
+    }
+    fn profile_change(&mut self, ui: &MainWindow, action: i32) -> Result<(), Problem> {
+        let mut data = self.profiles.clone();
+        let server_index = usize::try_from(ui.get_server_index()).map_err(|_| Problem::Profile);
+        let preset_index = usize::try_from(ui.get_preset_index()).map_err(|_| Problem::Profile);
+        match action {
+            0 if self.handle.is_none() => data.save_server(Server::new(
+                &ui.get_server_name(),
+                &self.config(ui, String::new())?,
+            )?)?,
+            1 if self.handle.is_none() => {
+                let server = data.servers.get(server_index?).ok_or(Problem::Profile)?;
+                ui.set_server(server.address.as_str().into());
+                ui.set_callsign(server.callsign.as_str().into());
+                ui.set_server_name(server.name.as_str().into());
+                ui.set_password("".into());
+                let (inputs, input) = restored_device(&self.inputs, &server.input, ui);
+                let (outputs, output) = restored_device(&self.outputs, &server.output, ui);
+                ui.set_inputs(inputs);
+                ui.set_outputs(outputs);
+                ui.set_input_index(input);
+                ui.set_output_index(output);
+                device_id(&self.inputs, input)?;
+                device_id(&self.outputs, output)?;
+                return Ok(());
+            }
+            2 if self.handle.is_none() => {
+                let index = server_index?;
+                if index >= data.servers.len() {
+                    return Err(Problem::Profile);
+                }
+                data.servers.remove(index);
+            }
+            3 => data.save_preset(Preset::new(
+                &ui.get_preset_name(),
+                ui.get_selected() as usize,
+                &self.radios,
+            )?)?,
+            4 => {
+                let preset = data.presets.get(preset_index?).ok_or(Problem::Profile)?;
+                self.apply_edit(
+                    ui,
+                    RadioEdit::Replace(Box::new(preset.radios())),
+                    Some(preset.selected),
+                )?;
+                ui.set_preset_name(preset.name.as_str().into());
+                return Ok(());
+            }
+            5 => {
+                let index = preset_index?;
+                if index >= data.presets.len() {
+                    return Err(Problem::Profile);
+                }
+                data.presets.remove(index);
+            }
+            _ => return Err(Problem::Profile),
+        }
+        self.store_command(ui, Command::Save(data));
+        Ok(())
+    }
+    fn poll_storage(&mut self, ui: &MainWindow) {
+        if !self.storage_busy {
+            return;
+        }
+        let Some(result) = self.storage.as_ref().and_then(Worker::poll) else {
+            return;
+        };
+        self.storage_busy = false;
+        ui.set_storage_busy(false);
+        match result {
+            Ok(data) => {
+                self.profiles = data;
+                ui.set_saved_servers(names(self.profiles.servers.iter().map(|s| s.name.clone())));
+                ui.set_saved_presets(names(self.profiles.presets.iter().map(|p| p.name.clone())));
+                ui.set_server_index(
+                    self.profiles
+                        .servers
+                        .iter()
+                        .position(|s| s.name == ui.get_server_name().as_str())
+                        .map_or(-1, |i| i as i32),
+                );
+                ui.set_preset_index(
+                    self.profiles
+                        .presets
+                        .iter()
+                        .position(|p| p.name == ui.get_preset_name().as_str())
+                        .map_or(-1, |i| i as i32),
+                );
+                ui.set_storage_status(0);
+            }
+            Err(error) => ui.set_storage_status(error as i32),
+        }
     }
     fn tick(&mut self, ui: &MainWindow) {
+        self.poll_storage(ui);
         let now = Instant::now();
         self.ptt.tick(now);
         let Some(handle) = &self.handle else {
@@ -243,6 +442,12 @@ impl App {
         let acknowledged = self.pending.is_some_and(|id| id == snapshot.completed_edit);
         if acknowledged {
             self.pending = None;
+            if let Some(selected) = self.pending_selection.take()
+                && snapshot.problem == Problem::None
+            {
+                ui.set_selected(selected as i32);
+                self.editor(ui);
+            }
             self.invalidate(ui);
             ui.set_problem(snapshot.problem as i32);
         }
@@ -293,15 +498,16 @@ impl App {
 }
 
 pub fn run() -> Result<(), slint::PlatformError> {
-    let (ui, app, timer) = setup()?;
+    let (ui, app, timer) = setup(Worker::default_path())?;
     let result = ui.run();
     timer.stop();
     // Explicitly drop/join even while the window/callback objects still exist.
     app.borrow_mut().handle.take();
+    app.borrow_mut().storage.take();
     result
 }
 type Application = (MainWindow, Rc<RefCell<App>>, Timer);
-fn setup() -> Result<Application, slint::PlatformError> {
+fn setup(profile_path: Option<std::path::PathBuf>) -> Result<Application, slint::PlatformError> {
     let selector = slint::BackendSelector::new()
         .backend_name("winit".into())
         .renderer_name("software".into());
@@ -323,6 +529,9 @@ fn setup() -> Result<Application, slint::PlatformError> {
     ui.set_outputs(device_model(&outputs, default_label));
     let radios = disabled_radios();
     ui.set_radios(rows(&radios));
+    let storage = Worker::start(profile_path).ok();
+    ui.set_storage_busy(storage.is_some());
+    ui.set_storage_status(if storage.is_some() { 1 } else { 2 });
     let app = Rc::new(RefCell::new(App {
         handle: None,
         ptt: UiInput::new(Instant::now()),
@@ -330,6 +539,10 @@ fn setup() -> Result<Application, slint::PlatformError> {
         inputs,
         outputs,
         pending: None,
+        pending_selection: None,
+        storage_busy: storage.is_some(),
+        storage,
+        profiles: Data::default(),
         next_edit: 0,
         stopping: false,
         last_problem: Problem::None,
@@ -362,6 +575,23 @@ fn setup() -> Result<Application, slint::PlatformError> {
     });
     callback!(on_edit_radio, |state, window, kind| {
         state.edit(&window, kind);
+    });
+    callback!(on_profile_action, |state, window, action| {
+        state.profile_action(&window, action);
+    });
+    callback!(on_profile_selected, |state, window, kind| {
+        state.invalidate(&window);
+        if kind == 0 {
+            if let Ok(index) = usize::try_from(window.get_server_index())
+                && let Some(server) = state.profiles.servers.get(index)
+            {
+                window.set_server_name(server.name.as_str().into());
+            }
+        } else if let Ok(index) = usize::try_from(window.get_preset_index())
+            && let Some(preset) = state.profiles.presets.get(index)
+        {
+            window.set_preset_name(preset.name.as_str().into());
+        }
     });
     callback!(on_pointer_input, |state, window, kind| {
         state.event(
@@ -498,7 +728,8 @@ mod tests {
         );
         let alsa = std::fs::read_to_string(std::env::var("ALSA_CONFIG_PATH").unwrap()).unwrap();
         assert_eq!(alsa, "pcm.!default { type null }\n");
-        let (ui, app, heartbeat) = setup().unwrap();
+        let profile_dir = tempfile::tempdir().unwrap();
+        let (ui, app, heartbeat) = setup(Some(profile_dir.path().join("profiles.json"))).unwrap();
         ui.set_demonstration(true);
         let peer_address = address.parse().unwrap();
         ui.set_server(address.into());
@@ -659,6 +890,79 @@ mod tests {
                 11 if !ui.get_busy() => {
                     assert!(!ui.get_ready());
                     assert!(state.borrow().handle.is_none());
+                    ui.set_server_name("Local training".into());
+                    ui.invoke_profile_action(0);
+                    *step = 13;
+                }
+                13 if !ui.get_storage_busy() => {
+                    assert_eq!(ui.get_storage_status(), 0);
+                    ui.set_server("127.0.0.1:1".into());
+                    ui.set_callsign("changed".into());
+                    ui.set_password("must clear on load".into());
+                    ui.set_server_index(0);
+                    ui.invoke_profile_action(1);
+                    assert_eq!(ui.get_server(), peer_address.to_string());
+                    assert_eq!(ui.get_callsign(), "Synthetic desktop");
+                    assert!(ui.get_password().is_empty());
+                    // Prepare an entire preset offline, without opening audio.
+                    ui.set_frequency("30.5".into());
+                    ui.set_modulation(1);
+                    ui.invoke_edit_radio(0);
+                    ui.set_radio_name("Ground net".into());
+                    ui.invoke_edit_radio(4);
+                    ui.set_guard("243".into());
+                    ui.invoke_edit_radio(1);
+                    ui.set_key("7".into());
+                    ui.invoke_edit_radio(2);
+                    ui.set_preset_name("TOC training".into());
+                    ui.invoke_profile_action(3);
+                    *step = 14;
+                }
+                14 if !ui.get_storage_busy() => {
+                    assert_eq!(ui.get_storage_status(), 0);
+                    ui.invoke_edit_radio(3);
+                    ui.invoke_profile_action(6);
+                    *step = 15;
+                }
+                15 if !ui.get_storage_busy() => {
+                    assert_eq!(ui.get_storage_status(), 0);
+                    ui.set_preset_index(0);
+                    ui.invoke_profile_action(4);
+                    assert_eq!(state.borrow().radios[2].frequency_hz, 30.5e6);
+                    assert_eq!(state.borrow().radios[2].name, "Ground net");
+                    assert_eq!(state.borrow().radios[2].guard_hz, 243e6);
+                    assert_eq!(state.borrow().radios[2].encryption_key, Some(7));
+                    assert!(!ui.get_busy());
+                    ui.set_password("fixture-blue".into());
+                    ui.invoke_connect_requested();
+                    *step = 16;
+                }
+                16 if ui.get_ready() => {
+                    assert_eq!(
+                        state.borrow().radios[2].frequency_hz,
+                        30.5e6,
+                        "offline preset lost during handshake"
+                    );
+                    ui.set_frequency("31.5".into());
+                    ui.invoke_edit_radio(0);
+                    *step = 17;
+                }
+                17 if !ui.get_editing() => {
+                    ui.invoke_pointer_input(1);
+                    ui.invoke_pointer_input(0);
+                    *step = 18;
+                }
+                18 if ui.get_phase() == 3 => {
+                    ui.invoke_profile_action(4);
+                    assert!(state.borrow().ptt.intent(2, Instant::now()).radio.is_none());
+                    *step = 19;
+                }
+                19 if !ui.get_editing() && ui.get_phase() == 2 => {
+                    assert_eq!(state.borrow().radios[2].frequency_hz, 30.5e6);
+                    ui.invoke_disconnect_requested();
+                    *step = 20;
+                }
+                20 if !ui.get_busy() => {
                     *done.borrow_mut() = true;
                     slint::quit_event_loop().unwrap();
                 }
@@ -669,9 +973,40 @@ mod tests {
         driver.stop();
         heartbeat.stop();
         app.borrow_mut().handle.take();
+        app.borrow_mut().storage.take();
+        let saved = std::fs::read_to_string(profile_dir.path().join("profiles.json")).unwrap();
+        assert!(
+            saved.contains("Ground net")
+                && !saved.contains("fixture-blue")
+                && !saved.contains("password")
+        );
         assert!(
             *complete.borrow(),
             "window closed before validation completed"
         );
+    }
+}
+
+#[cfg(test)]
+mod device_tests {
+    use super::*;
+    #[test]
+    fn saved_devices_follow_identity_and_missing_devices_never_fall_back() {
+        let devices = vec![
+            DeviceInfo {
+                id: "second".into(),
+                name: "Same display name".into(),
+            },
+            DeviceInfo {
+                id: "first".into(),
+                name: "Same display name".into(),
+            },
+        ];
+        assert_eq!(device_index(&devices, "first"), Some(2));
+        assert_eq!(device_id(&devices, 2).unwrap(), "first");
+        assert_eq!(device_index(&devices, "unplugged"), None);
+        assert_eq!(device_id(&devices, 3), Err(Problem::Device));
+        assert_eq!(device_id(&devices, -1), Err(Problem::Device));
+        assert_eq!(device_id(&devices, 0).unwrap(), "default");
     }
 }

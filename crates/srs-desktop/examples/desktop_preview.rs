@@ -21,6 +21,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         Rc::new(VecModel::from(
             (0..10)
                 .map(|index| RadioRow {
+                    name: match index {
+                        0 => "Command",
+                        1 => "Tower",
+                        2 => "Ground",
+                        _ => "",
+                    }
+                    .into(),
                     frequency: match index {
                         0 => "251.000000",
                         1 => "124.000000",
@@ -35,6 +42,17 @@ fn main() -> Result<(), Box<dyn Error>> {
         ))
         .into(),
     );
+    ui.set_saved_servers(Rc::new(VecModel::from(vec!["Training server".into()])).into());
+    ui.set_server_index(0);
+    ui.set_server_name("Training server".into());
+    ui.set_saved_presets(Rc::new(VecModel::from(vec!["TOC standard".into()])).into());
+    ui.set_preset_index(0);
+    ui.set_preset_name("TOC standard".into());
+    ui.set_radio_name("Command".into());
+    if std::env::args().any(|arg| arg == "--profiles") {
+        ui.set_profiles_open(true);
+        ui.window().set_size(slint::LogicalSize::new(1080., 1060.));
+    }
     ui.set_busy(true);
     ui.set_ready(true);
     ui.set_armed(true);

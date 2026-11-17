@@ -48,6 +48,30 @@ export global Strings {
     out property<string> error-backlog: @tr("error.backlog" => "The radio request expired. Apply it again.");
     out property<string> error-identity: @tr("error.identity" => "Could not create a secure session identity. Close and reopen the application.");
     out property<string> error-frequency: @tr("error.frequency" => "Enter a frequency above 0.010 MHz and at most 10000 MHz, using a decimal point.");
+    out property<string> saved-setups: @tr("profiles.setups" => "SAVED SERVERS & RADIO PRESETS");
+    out property<string> show-setups: @tr("profiles.show" => "Show saved setups");
+    out property<string> hide-setups: @tr("profiles.hide" => "Hide saved setups");
+    out property<string> saved-servers: @tr("profiles.servers" => "Saved servers");
+    out property<string> presets: @tr("profiles.presets" => "Radio presets");
+    out property<string> profile-name: @tr("profiles.name" => "Name (required)");
+    out property<string> server-name: @tr("profiles.server-name" => "Saved server name");
+    out property<string> preset-name: @tr("profiles.preset-name" => "Radio preset name");
+    out property<string> radio-name: @tr("radio.name" => "Radio name");
+    out property<string> apply-name: @tr("radio.apply-name" => "Apply name");
+    out property<string> save: @tr("profiles.save" => "Save / replace");
+    out property<string> load: @tr("profiles.load" => "Load");
+    out property<string> remove: @tr("profiles.remove" => "Remove");
+    out property<string> reload: @tr("profiles.reload" => "Reload saved lists");
+    out property<string> missing-device: @tr("profiles.missing-device" => "Unavailable saved device — choose another");
+    out property<string> error-profile: @tr("error.profile" => "Use a name of 1–64 bytes and valid settings. Maximum 32 saved servers and 32 presets; radio names may be blank.");
+    public pure function storage(code: int) -> string {
+        code == 1 ? @tr("profiles.working" => "Reading / saving settings…") :
+        code == 2 ? @tr("profiles.io-error" => "Settings file unavailable. Check access, then reload saved lists.") :
+        code == 3 ? @tr("profiles.invalid" => "Invalid or newer settings file preserved. Repair or move it, then reload saved lists.") :
+        code == 4 ? @tr("profiles.conflict" => "Settings changed in another app. Reload saved lists before saving again.") :
+        code == 5 ? @tr("profiles.locked" => "Settings file busy. Try again after the other save finishes.") :
+        @tr("profiles.help" => "Save replaces the same name. Load applies all radios and releases PTT.")
+    }
     public pure function problem(code: int) -> string {
         code == 1 ? root.error-address :
         code == 2 ? root.error-callsign :
@@ -61,6 +85,7 @@ export global Strings {
         code == 10 ? root.error-backlog :
         code == 11 ? root.error-identity :
         code == 12 ? root.error-frequency :
+        code == 13 ? root.error-profile :
         ""
     }
     public pure function radio-label(slot: int, frequency: string, mode: string) -> string {

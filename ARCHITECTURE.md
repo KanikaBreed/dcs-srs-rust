@@ -27,7 +27,7 @@ flowchart TB
 | `srs-audio` (Opus and jitter implemented) | Fixed-frame codec and bounded sequence/jitter/PLC; effects planned | Device handles, UI state mutation, unbounded buffering |
 | `srs-device` (desktop probe implemented) | Explicit native input/output, bounded callback queues, capture permits and conversion; hardware PTT and permissions/lifecycle adapters pending; session orchestration lives in srs-toc | Duplicated radio/protocol rules |
 | `srs-toc` (integrated worker/console) | Owned session/audio orchestration, input leases, mono mixing, live radio edits and timed/foreground keyboard console | Global/HID PTT, UI, reconnect and mobile lifecycle |
-| `srs-desktop` (desktop preview) | Slint connection/device controls, radio editors, foreground F8/pointer PTT, bounded commands and status; mobile UI later | Codec and routing decisions in callbacks |
+| `srs-desktop` (desktop preview) | Slint connection/device controls, radio editors, saved servers/presets, foreground F8/pointer PTT, bounded commands and status; mobile UI later | Codec and routing decisions in callbacks |
 | DCS adapter | Existing Lua export/update interfaces, later cockpit support | Rewriting every aircraft script at bootstrap |
 | Optional server/gateway | Later compatible Rust relay; separate iOS wake-up service if required | Dependency for the first desktop/Android client |
 
@@ -41,7 +41,7 @@ Add crates when they have a concrete responsibility and implementation. Do not c
 - Slint 1.19.0 with winit, software rendering and accessibility for the Windows/Linux desktop preview.
 - Kotlin/Java and Swift/Objective-C adapters where native lifecycle APIs require them.
 
-Serde/serde_json and Tokio are used and locked in Cargo.lock. Tokio's enabled features cover TCP/UDP, buffered I/O, bounded latest-value watch channels, timing, and a runtime; the library does not spawn background tasks. Opus uses the safe `opus` binding and bundled libopus 1.6.1 through opusic-sys. The device adapter locks CPAL 0.18.2 and rtrb 0.4.1; allocation-counter 0.8.1 is test-only. Crossterm 0.29.0 supplies the foreground terminal adapter; Slint is pinned to 1.19.0; its generated module is the only desktop-code exception to the unsafe lint. Handwritten modules forbid unsafe. getrandom supplies ephemeral session identities. Confirm device/UI choices through a physical-device spike. Shared Rust does not remove platform-specific audio-session work. libfuzzer-sys is isolated in a separate development-only fuzz workspace.
+Serde/serde_json and Tokio are used and locked in Cargo.lock. Tokio's enabled features cover TCP/UDP, buffered I/O, bounded latest-value watch channels, timing, and a runtime; the library does not spawn background tasks. Opus uses the safe `opus` binding and bundled libopus 1.6.1 through opusic-sys. The device adapter locks CPAL 0.18.2 and rtrb 0.4.1; allocation-counter 0.8.1 is test-only. Crossterm 0.29.0 supplies the foreground terminal adapter; Slint is pinned to 1.19.0; its generated module is the only desktop-code exception to the unsafe lint. Handwritten modules forbid unsafe. getrandom supplies ephemeral session identities. The desktop profiles worker uses Serde JSON, directories 6.0.0 for user configuration paths and tempfile 3.27.0 for atomic replacement. Its versioned schema never includes passwords or PTT state. Complete radio presets use the same bounded session command path and current-policy validation as single-field edits. Confirm device/UI choices through a physical-device spike. Shared Rust does not remove platform-specific audio-session work. libfuzzer-sys is isolated in a separate development-only fuzz workspace.
 
 ## Threading and ownership
 
@@ -65,7 +65,7 @@ DCS cockpit/terrain state belongs to a later adapter. A phone in TOC mode does n
 - `crates/srs-audio/`: fixed-frame Opus, bounded jitter buffer, impairment simulations, and offline codec/load probes.
 - `crates/srs-device/`: native device ownership, bounded callback bridges, FIR conversion, local audio probe, and simulated load probe.
 - `crates/srs-toc/`: integrated session/audio worker, input ownership, live radio commands, timed/foreground keyboard console and synthetic stock-server probe.
-- `crates/srs-desktop/`: desktop UI, localization strings, worker ownership and synthetic preview.
+- `crates/srs-desktop/`: desktop UI, localization strings, session/profile worker ownership, bounded configuration persistence and synthetic preview.
 - `scripts/test_desktop.py`: private-display/native-null GUI-session integration check.
 - `scripts/test_keyboard.py`: simulated terminal key/focus/stall/restore checks inside the stock-server namespace.
 - `scripts/test_toc_console.py`: actual console/native null-PCM check inside the stock-server namespace.

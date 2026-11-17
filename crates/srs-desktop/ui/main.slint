@@ -1,7 +1,7 @@
 import { Button, LineEdit, ComboBox, ScrollView } from "std-widgets.slint";
 import { Strings } from "strings.slint";
 export { Strings }
-export struct RadioRow { frequency: string, guard: string, key: string, mode: string, enabled: bool }
+export struct RadioRow { name: string, frequency: string, guard: string, key: string, mode: string, enabled: bool }
 global Theme {
     out property<color> background: #101b26;
     out property<color> panel: #192938;
@@ -39,16 +39,29 @@ export component MainWindow inherits Window {
     in property<string> received: "0";
     in property<[RadioRow]> radios;
     in-out property<int> selected: 1;
+    in-out property<string> radio-name;
     in-out property<string> frequency: "251.000";
     in-out property<string> guard;
     in-out property<string> key;
     in-out property<int> modulation;
+    in property<[string]> saved-servers;
+    in property<[string]> saved-presets;
+    in-out property<int> server-index: -1;
+    in-out property<int> preset-index: -1;
+    in-out property<string> server-name;
+    in-out property<string> preset-name;
+    in-out property<bool> profiles-open;
+    in property<bool> storage-busy;
+    in property<int> storage-status;
+    private property<bool> can-edit: (!root.busy || root.ready) && !root.editing;
     private property<bool> can-talk: root.ready && !root.editing && root.radios[root.selected - 1].enabled;
     callback connect-requested();
     callback disconnect-requested();
     callback select-radio(int);
     callback edit-radio(int);
     callback pointer-input(int);
+    callback profile-action(int);
+    callback profile-selected(int);
     VerticalLayout {
         padding: 24px; spacing: 15px;
         HorizontalLayout {
@@ -102,6 +115,37 @@ export component MainWindow inherits Window {
                 Text { text: root.rx-active ? Strings.rx : ""; color: Theme.accent; horizontal-alignment: right; }
             }
         }
+        Rectangle { background: Theme.panel; border-radius: 8px;
+            VerticalLayout { padding: 12px; spacing: 8px;
+                HorizontalLayout { spacing: 8px;
+                    Label { text: Strings.saved-setups; vertical-alignment: center; }
+                    Label { text: root.profiles-open || root.storage-status == 0 ? "" : Strings.storage(root.storage-status); wrap: word-wrap; }
+                    Button { text: root.profiles-open ? Strings.hide-setups : Strings.show-setups; max-width: 220px; clicked => { root.profiles-open = !root.profiles-open; } }
+                }
+                if root.profiles-open: VerticalLayout { spacing: 8px;
+                    HorizontalLayout { spacing: 8px;
+                        Label { text: Strings.saved-servers; vertical-alignment: center; }
+                        ComboBox { model: root.saved-servers; current-index <=> root.server-index; enabled: !root.busy && !root.storage-busy; accessible-label: Strings.saved-servers; selected(value) => { root.profile-selected(0); } }
+                        LineEdit { text <=> root.server-name; placeholder-text: Strings.profile-name; accessible-label: Strings.server-name; enabled: !root.busy && !root.storage-busy; }
+                        Button { text: Strings.save; enabled: !root.busy && !root.storage-busy; clicked => { root.profile-action(0); } }
+                        Button { text: Strings.load; enabled: !root.busy && !root.storage-busy && root.server-index >= 0; clicked => { root.profile-action(1); } }
+                        Button { text: Strings.remove; enabled: !root.busy && !root.storage-busy && root.server-index >= 0; clicked => { root.profile-action(2); } }
+                    }
+                    HorizontalLayout { spacing: 8px;
+                        Label { text: Strings.presets; vertical-alignment: center; }
+                        ComboBox { model: root.saved-presets; current-index <=> root.preset-index; enabled: !root.storage-busy && !root.editing; accessible-label: Strings.presets; selected(value) => { root.profile-selected(1); } }
+                        LineEdit { text <=> root.preset-name; placeholder-text: Strings.profile-name; accessible-label: Strings.preset-name; enabled: !root.storage-busy && !root.editing; }
+                        Button { text: Strings.save; enabled: !root.storage-busy && root.can-edit; clicked => { root.profile-action(3); } }
+                        Button { text: Strings.load; enabled: !root.storage-busy && root.can-edit && root.preset-index >= 0; clicked => { root.profile-action(4); } }
+                        Button { text: Strings.remove; enabled: !root.storage-busy && !root.editing && root.preset-index >= 0; clicked => { root.profile-action(5); } }
+                    }
+                    HorizontalLayout { spacing: 8px;
+                        Label { text: Strings.storage(root.storage-status); wrap: word-wrap; }
+                        Button { text: Strings.reload; enabled: !root.storage-busy && !root.editing; clicked => { root.profile-action(6); } }
+                    }
+                }
+            }
+        }
         HorizontalLayout {
             spacing: 18px; min-height: 180px; vertical-stretch: 1;
             VerticalLayout {
@@ -112,7 +156,7 @@ export component MainWindow inherits Window {
                         spacing: 5px;
                         for radio[index] in root.radios: Button {
                             min-height: 36px;
-                            text: Strings.radio-label(index + 1, radio.enabled ? radio.frequency : Strings.off, radio.enabled ? radio.mode : "");
+                            text: Strings.radio-label(index + 1, radio.enabled ? radio.frequency : Strings.off, radio.enabled ? radio.mode : "") + (radio.name == "" ? "" : "  ·  " + radio.name);
                             primary: root.selected == index + 1;
                             enabled: !root.editing;
                             clicked => { root.select-radio(index + 1); }
@@ -131,33 +175,37 @@ export component MainWindow inherits Window {
                     }
                     ScrollView {
                     VerticalLayout { spacing: 14px;
+                    HorizontalLayout { spacing: 12px;
+                        LineEdit { text <=> root.radio-name; placeholder-text: Strings.radio-name; accessible-label: Strings.radio-name; enabled: root.can-edit; }
+                        Button { text: Strings.apply-name; enabled: root.can-edit; clicked => { root.edit-radio(4); } }
+                    }
                     HorizontalLayout {
                         spacing: 12px;
                         VerticalLayout { spacing: 4px;
                             Label { text: Strings.frequency; }
-                            LineEdit { text <=> root.frequency; enabled: root.ready && !root.editing; accessible-label: Strings.frequency; }
+                            LineEdit { text <=> root.frequency; enabled: root.can-edit; accessible-label: Strings.frequency; }
                         }
                         VerticalLayout { spacing: 4px;
                             Label { text: Strings.modulation; }
-                            ComboBox { model: ["AM", "FM"]; current-index <=> root.modulation; enabled: root.ready && !root.editing; accessible-label: Strings.modulation; }
+                            ComboBox { model: ["AM", "FM"]; current-index <=> root.modulation; enabled: root.can-edit; accessible-label: Strings.modulation; }
                         }
-                        Button { text: Strings.tune; enabled: root.ready && !root.editing; clicked => { root.edit-radio(0); } }
+                        Button { text: Strings.tune; enabled: root.can-edit; clicked => { root.edit-radio(0); } }
                     }
                     HorizontalLayout { spacing: 12px;
                         VerticalLayout { spacing: 4px;
                             Label { text: Strings.guard; }
-                            LineEdit { text <=> root.guard; enabled: root.ready && !root.editing; accessible-label: Strings.guard; }
+                            LineEdit { text <=> root.guard; enabled: root.can-edit; accessible-label: Strings.guard; }
                         }
-                        Button { text: Strings.apply; accessible-label: Strings.guard; enabled: root.ready && !root.editing; clicked => { root.edit-radio(1); } }
+                        Button { text: Strings.apply; accessible-label: Strings.guard; enabled: root.can-edit; clicked => { root.edit-radio(1); } }
                     }
                     HorizontalLayout { spacing: 12px;
                         VerticalLayout { spacing: 4px;
                             Label { text: Strings.key; }
-                            LineEdit { text <=> root.key; enabled: root.ready && !root.editing; accessible-label: Strings.key; }
+                            LineEdit { text <=> root.key; enabled: root.can-edit; accessible-label: Strings.key; }
                         }
-                        Button { text: Strings.apply; accessible-label: Strings.key; enabled: root.ready && !root.editing; clicked => { root.edit-radio(2); } }
+                        Button { text: Strings.apply; accessible-label: Strings.key; enabled: root.can-edit; clicked => { root.edit-radio(2); } }
                     }
-                    Button { text: Strings.disable; enabled: root.ready && !root.editing; clicked => { root.edit-radio(3); } }
+                    Button { text: Strings.disable; enabled: root.can-edit; clicked => { root.edit-radio(3); } }
                     Label { text: root.editing ? Strings.editing : Strings.delivery; wrap: word-wrap; }
                     }
                     }
