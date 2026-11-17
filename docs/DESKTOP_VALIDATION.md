@@ -11,7 +11,7 @@ python3 scripts/check.py
 python3 scripts/build_desktop.py --out .scratch/desktop-validation
 ```
 
-The script builds the desktop binary with `Cargo.lock`, copies it into a new directory, and records its SHA-256, source revision/dirty status, Rust/Cargo versions and build profile in `manifest.json`. It never overwrites a previous validation build or launches audio. Use `--release` for an optimized build. Debug builds are suitable for menu checks; use optimized builds for meaningful CPU/latency measurements. Recording the build inputs does not promise bit-for-bit reproducibility across toolchains/OS versions.
+CI invokes this helper on Linux, Windows and macOS without launching or uploading the executable. The script builds the desktop binary with `Cargo.lock`, copies it into a new directory, and records its SHA-256, source revision/dirty status, Rust/Cargo versions and build profile in `manifest.json`. It never overwrites a previous validation build or launches audio. Use `--release` for an optimized build. Debug builds are suitable for menu checks; use optimized builds for meaningful CPU/latency measurements. Recording the build inputs does not promise bit-for-bit reproducibility across toolchains/OS versions.
 
 Launch `srs-desktop.exe` on Windows or `./srs-desktop` on Linux from the output directory. Keep the manifest with the results. Use a clean committed checkout for a reviewable source identity; `source_dirty: true` cannot identify uncommitted content by commit alone. Native libraries/fonts still come from the host. The copied project notices do not constitute the full dependency/source bundle needed for redistribution. Signing, installers, dependency notices and distribution-source availability remain release gates.
 
