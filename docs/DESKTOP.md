@@ -4,7 +4,7 @@ Windows and Linux desktop delivery now comes before Android/iOS. `srs-desktop` p
 
 ## Run
 
-Install stable Rust (at least 1.95 for Slint 1.19), a C/C++ toolchain and CMake. Windows builds use the MSVC toolchain. On Debian/Ubuntu, install `libasound2-dev pkg-config libxkbcommon-dev`; a graphical X11 or Wayland session and system fonts are required. The renderer is software-based and does not require Qt.
+Install stable Rust (at least 1.95 for Slint 1.19), a C/C++ toolchain and CMake. Windows builds use the MSVC toolchain. On Debian/Ubuntu, install `libasound2-dev pkg-config libxkbcommon-dev libfontconfig1-dev`; a graphical X11 or Wayland session and system fonts are required. The renderer is software-based and does not require Qt.
 
 ```sh
 cargo run --locked -p srs-desktop
@@ -39,7 +39,7 @@ xvfb-run -a -s '-screen 0 1400x1100x24 -nolisten tcp' target/debug/examples/desk
 
 The PPM files are actual software-rendered window snapshots. Set `SLINT_SCALE_FACTOR=1.5` and increase the private display size to inspect DPI scaling. These synthetic labels/counters are not evidence of network delivery.
 
-`python3 scripts/test_stock_server.py` also runs the ignored desktop integration test in a private network namespace with stock SRS 2.4.1.0, a private Xvfb display and process-local ALSA null PCM. Additional Linux test packages are `xvfb xauth x11-utils fonts-dejavu-core`. The helper focuses only its visibly marked synthetic window on that private display. GUI callbacks drive connect, tuning, null capture/transmit, guard/key/off and disconnect. It deliberately freezes the UI thread while the session continues to verify release, rejects queued input after that stall, checks pointer cancellation and the hold cap, and joins the worker. It does not automate physical mouse/keyboard input. Ordinary workspace tests skip this explicitly marked integration test. Use `--desktop-only` with the stock-server runner to repeat just this integration check.
+`python3 scripts/test_stock_server.py` also runs the ignored desktop integration test in a private network namespace with stock SRS 2.4.1.0, a private Xvfb display and process-local ALSA null PCM. Additional Linux test packages are `xvfb xauth x11-utils fonts-dejavu-core`. The helper focuses only its visibly marked synthetic window on that private display. A second generated-tone client sends Opus through the stock server into desktop playout and the RX indicator. GUI callbacks drive connect, tuning, null capture/transmit, guard/key/off and disconnect. It deliberately freezes the UI thread while the session continues to verify release, rejects queued input after that stall, checks pointer cancellation and the hold cap, and joins the worker. It does not automate physical mouse/keyboard input. Ordinary workspace tests skip this explicitly marked integration test. Use `--desktop-only` with the stock-server runner to repeat just this integration check.
 
 Local verification includes the full workspace checks, the private stock-server desktop test, and visual inspection of actual synthetic RX at 100% and TX at 150% scale. These are software/null-device checks, not hardware acceptance.
 

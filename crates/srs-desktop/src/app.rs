@@ -430,6 +430,60 @@ fn setup() -> Result<Application, slint::PlatformError> {
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
+    struct Peer(Option<std::thread::JoinHandle<()>>);
+    impl Drop for Peer {
+        fn drop(&mut self) {
+            if let Some(thread) = self.0.take() {
+                let _ = thread.join();
+            }
+        }
+    }
+    fn generated_peer(address: std::net::SocketAddr) -> Peer {
+        Peer(Some(std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(async {
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    let id = srs_protocol::voice::ClientId::from_bytes(b"GGGGGGGGGGGGGGGGGGGGGG")
+                        .unwrap();
+                    let mut session = srs_client::Session::connect(
+                        address,
+                        srs_client::Identity::new(id, "Generated GUI receive test"),
+                        srs_client::Options::default(),
+                    )
+                    .await
+                    .unwrap();
+                    session.authenticate("fixture-blue").await.unwrap();
+                    let mut radios = disabled_radios();
+                    radios[1] = Radio::tuned(251_125_000.0, Modulation::AM);
+                    session.set_radios(radios).await.unwrap();
+                    let mut voice = session.open_voice().await.unwrap();
+                    voice.press_ptt(1).unwrap();
+                    let mut encoder = srs_audio::Encoder::new().unwrap();
+                    let mut encoded = [0; srs_audio::MAX_OPUS_BYTES];
+                    for frame in 0..12 {
+                        let pcm = std::array::from_fn(|index| {
+                            let sample = frame * srs_audio::INPUT_SAMPLES + index;
+                            (8000.0
+                                * (sample as f32 * std::f32::consts::TAU * 440.0 / 16000.0).sin())
+                                as i16
+                        });
+                        let count = encoder.encode(&pcm, &mut encoded).unwrap();
+                        voice.send_frame(&encoded[..count]).await.unwrap();
+                        tokio::time::sleep(Duration::from_millis(40)).await;
+                    }
+                    voice.release_ptt();
+                    // Retain the owned TCP session throughout the short burst.
+                    session.close();
+                })
+                .await
+                .unwrap();
+            });
+        })))
+    }
+
     #[test]
     #[ignore = "requires test_stock_server.py private server, Xvfb and process-local null PCM"]
     fn desktop_session_smoke() {
@@ -446,6 +500,7 @@ mod tests {
         assert_eq!(alsa, "pcm.!default { type null }\n");
         let (ui, app, heartbeat) = setup().unwrap();
         ui.set_demonstration(true);
+        let peer_address = address.parse().unwrap();
         ui.set_server(address.into());
         ui.set_callsign("Synthetic desktop".into());
         ui.set_password("fixture-blue".into());
@@ -461,6 +516,8 @@ mod tests {
         let mut at = Instant::now();
         let mut sent_at_stall = 0;
         let mut saw_long_tx = false;
+        let mut peer: Option<Peer> = None;
+        let mut saw_rx = false;
         let driver = Timer::default();
         driver.start(TimerMode::Repeated, Duration::from_millis(50), move || {
             let ui = weak.upgrade().unwrap();
@@ -480,6 +537,9 @@ mod tests {
             let mut step = step.borrow_mut();
             if *step == 9 && ui.get_phase() == 3 {
                 saw_long_tx = true;
+            }
+            if ui.get_rx_active() {
+                saw_rx = true;
             }
             match *step {
                 0 if ui.get_ready()
@@ -503,6 +563,20 @@ mod tests {
                         "private test window must own focus"
                     );
                     assert_eq!(state.borrow().radios[1].frequency_hz, 251_125_000.0);
+                    peer = Some(generated_peer(peer_address));
+                    *step = 12;
+                }
+                12 if peer
+                    .as_ref()
+                    .is_some_and(|peer| peer.0.as_ref().unwrap().is_finished()) =>
+                {
+                    peer.as_mut().unwrap().0.take().unwrap().join().unwrap();
+                    peer = None;
+                    assert!(
+                        ui.get_received().parse::<u64>().unwrap() > 0,
+                        "generated stock-server audio must reach native playout"
+                    );
+                    assert!(saw_rx, "received audio must appear in the UI");
                     ui.invoke_pointer_input(1);
                     ui.invoke_pointer_input(0);
                     assert!(

@@ -19,6 +19,9 @@ getrandom = "0.4.2"
 [build-dependencies]
 slint-build = "=1.19.0"
 
+[dev-dependencies]
+srs-audio = { path = "../srs-audio" }
+
 [lints.rust]
 # Slint-generated component code uses toolkit-managed unsafe internally.
 # Only the generated module allows it; hand-written modules forbid unsafe.

@@ -4250,6 +4250,7 @@ dependencies = [
  "getrandom 0.4.3",
  "slint",
  "slint-build",
+ "srs-audio",
  "srs-client",
  "srs-device",
  "srs-protocol",

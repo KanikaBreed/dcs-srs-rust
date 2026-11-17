@@ -67,7 +67,7 @@ def verify_desktop(address, test_binary):
             sys.executable, str(Path(__file__).resolve()), "--inside-private-display", str(test_binary),
         ], cwd=ROOT, env=env, check=True, timeout=45)
         print("PASS: desktop window/controller authenticated with stock SRS; disabled-radio start, "
-              "native null capture/TX, UI-stall release, stale-input rejection, pointer cancel, "
+              "generated stock-server RX/indicator, native null capture/TX, UI-stall release, stale-input rejection, pointer cancel, "
               "tune/guard/key/off, hold cap and disconnect/join. No hardware.", flush=True)
 
 
