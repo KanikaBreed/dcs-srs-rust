@@ -28,11 +28,11 @@ For independent local verification, follow the [fixture guide](../crates/srs-pro
 
 ## Harnesses
 
-Session tests use loopback sockets on ephemeral ports, scripted peers, and Tokio virtual time for refresh scheduling. The stock-server runner uses a fresh private Linux network namespace and temporary synthetic configuration. Run `python3 scripts/test_stock_server.py`; [SESSION.md](SESSION.md) records the pinned release hash, prerequisites, exact checks, and limits. Both enabled and disabled EAM are tested. This runner downloads a server binary and opens isolated local sockets, but uses no audio devices.
+Session tests use loopback sockets on ephemeral ports, scripted peers, and Tokio virtual time for refresh scheduling. The stock-server runner uses a fresh private Linux network namespace and temporary synthetic configuration. Run `python3 scripts/test_stock_server.py`; [SESSION.md](SESSION.md) records the pinned release hash, prerequisites, exact checks, and limits. Both enabled and disabled EAM are tested. This runner downloads a server binary and opens isolated local sockets, and uses process-local null audio for the console/desktop checks, never physical audio devices.
 
 Generated-tone probes now report local encode-start-to-PCM-playout timing, spacing variation, frame delivery, and codec durations. [VOICE.md](VOICE.md) gives the commands and measurement limits. The [receive guide](RECEIVE.md) documents jitter/impairment simulations and the offline 16-speaker `jitter_probe` CPU/memory workload. Keep test configurations isolated from user profiles. Bind local test services to loopback by default and use distinct ports for parallel sessions.
 
-Use a task-specific window title for future automated UI demos and make automation visibly identifiable. Do not copy Aurora environment variable names or document nonexistent commands. Add runnable commands here when the harness lands.
+The [desktop preview and integration harness](DESKTOP.md) uses a visibly marked synthetic window on a private Xvfb display. It exercises GUI callbacks through stock-server/null-audio transmission, UI-stall release, queued-input rejection, pointer cancellation, radio edits, hold expiry and worker cleanup. Unit tests also cover freshness/re-arm behavior and authoritative server-policy radio updates. Physical input, screen readers and Wayland remain pending.
 
 See [device validation](DEVICES.md) for local tone/capture/loopback commands and physical headset checks.
 

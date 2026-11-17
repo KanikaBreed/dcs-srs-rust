@@ -3,6 +3,7 @@
 
 import argparse
 import hashlib
+import json
 import os
 from pathlib import Path
 import signal
@@ -15,6 +16,7 @@ import urllib.request
 
 from test_toc_console import verify_console
 from test_keyboard import verify_keyboard
+from test_desktop import verify_desktop
 
 ROOT = Path(__file__).resolve().parent.parent
 SHA256 = "46268dd35204d04426974f66d25eaddaebbaa6b133a7bd227675fae30ed88127"
@@ -56,6 +58,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--server", type=Path, help="existing official Linux binary; default downloads to .scratch")
     parser.add_argument("--isolated-from", help=argparse.SUPPRESS)
+    parser.add_argument("--desktop-test-binary", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--desktop-only", action="store_true", help="run only the isolated desktop GUI/session check")
     args = parser.parse_args()
     if sys.platform != "linux":
         raise SystemExit("This stock-server runner requires Linux network namespaces")
@@ -77,7 +81,12 @@ def main():
             temporary.replace(binary)
         verified_binary(binary)
         binary.chmod(binary.stat().st_mode | 0o100)
-        subprocess.run(["cargo", "build", "--locked", "-p", "srs-client", "-p", "srs-toc", "--examples", "--bins"], cwd=ROOT, check=True)
+        subprocess.run(["cargo", "build", "--locked", "-p", "srs-client", "-p", "srs-toc", "-p", "srs-desktop", "--examples", "--bins"], cwd=ROOT, check=True)
+        build = subprocess.run(["cargo", "test", "--locked", "-p", "srs-desktop", "--lib", "--no-run", "--message-format=json"], cwd=ROOT, check=True, stdout=subprocess.PIPE, text=True)
+        artifacts = [json.loads(line) for line in build.stdout.splitlines()]
+        test_binary = next(Path(item["executable"]) for item in artifacts
+                           if item.get("reason") == "compiler-artifact" and item.get("executable")
+                           and item["target"]["name"] == "srs_desktop")
         namespace = os.readlink("/proc/self/ns/net")
         command = ["unshare", "--net"]
         if os.geteuid() != 0:
@@ -88,6 +97,9 @@ def main():
         if os.environ.get("SRS_TEST_SUDO_NAMESPACE") == "1":
             command = ["sudo", "--non-interactive", "unshare", "--net", sys.executable,
                        str(Path(__file__).resolve()), "--server", str(binary), "--isolated-from", namespace]
+        if args.desktop_only:
+            command += ["--desktop-only"]
+        command += ["--desktop-test-binary", str(test_binary)]
         subprocess.run(command, cwd=ROOT, check=True, timeout=120)
         return
     if os.readlink("/proc/self/ns/net") == args.isolated_from:
@@ -131,6 +143,10 @@ def main():
                             if time.monotonic() >= deadline:
                                 raise SystemExit("Stock server did not open TCP in 15 seconds")
                             time.sleep(0.1)
+                    if args.desktop_only:
+                        if enabled:
+                            verify_desktop(f"127.0.0.1:{port}", args.desktop_test_binary)
+                        continue
                     subprocess.run([str(probe), f"127.0.0.1:{port}", "enabled" if enabled else "disabled"],
                                    cwd=ROOT, check=True, timeout=30)
                     if enabled:
@@ -139,6 +155,7 @@ def main():
                         measured_probe([str(ROOT / "target/debug/examples/session_audio_probe"), f"127.0.0.1:{port}"])
                         verify_console(f"127.0.0.1:{port}")
                         verify_keyboard(f"127.0.0.1:{port}")
+                        verify_desktop(f"127.0.0.1:{port}", args.desktop_test_binary)
                 finally:
                     if process.poll() is None:
                         os.killpg(process.pid, signal.SIGTERM)
@@ -147,7 +164,7 @@ def main():
                         except subprocess.TimeoutExpired:
                             os.killpg(process.pid, signal.SIGKILL)
                             process.wait()
-    print("Verified official binary SHA-256; both isolated stock-server scenarios passed.")
+    print("Verified official binary SHA-256; selected isolated stock-server checks passed.")
 
 
 if __name__ == "__main__":

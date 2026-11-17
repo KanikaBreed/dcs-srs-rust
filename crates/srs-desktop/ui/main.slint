@@ -1,0 +1,197 @@
+import { Button, LineEdit, ComboBox, ScrollView } from "std-widgets.slint";
+import { Strings } from "strings.slint";
+export { Strings }
+export struct RadioRow { frequency: string, guard: string, key: string, mode: string, enabled: bool }
+global Theme {
+    out property<color> background: #101b26;
+    out property<color> panel: #192938;
+    out property<color> text: #edf3f7;
+    out property<color> muted: #b5c6d4;
+    out property<color> accent: #76dccb;
+    out property<color> tx: #ffbd75;
+    out property<color> error: #ffb6b0;
+}
+component Label inherits Text { color: Theme.muted; font-size: 13px; }
+export component MainWindow inherits Window {
+    title: root.demonstration ? Strings.title + " • " + Strings.preview : Strings.title;
+    preferred-width: 1080px;
+    preferred-height: 900px;
+    min-width: 900px;
+    min-height: 800px;
+    background: Theme.background;
+    default-font-size: 15px;
+    in property<bool> demonstration;
+    in-out property<string> server: "127.0.0.1:5002";
+    in-out property<string> callsign: "TOC";
+    in-out property<string> password;
+    in property<[string]> inputs;
+    in property<[string]> outputs;
+    in-out property<int> input-index;
+    in-out property<int> output-index;
+    in property<bool> busy;
+    in property<bool> ready;
+    in property<bool> editing;
+    in property<bool> armed;
+    in property<bool> rx-active;
+    in property<int> phase;
+    in property<int> problem;
+    in property<string> sent: "0";
+    in property<string> received: "0";
+    in property<[RadioRow]> radios;
+    in-out property<int> selected: 1;
+    in-out property<string> frequency: "251.000";
+    in-out property<string> guard;
+    in-out property<string> key;
+    in-out property<int> modulation;
+    private property<bool> can-talk: root.ready && !root.editing && root.radios[root.selected - 1].enabled;
+    callback connect-requested();
+    callback disconnect-requested();
+    callback select-radio(int);
+    callback edit-radio(int);
+    callback pointer-input(int);
+    VerticalLayout {
+        padding: 24px; spacing: 15px;
+        HorizontalLayout {
+            Text { text: Strings.title; color: Theme.text; font-size: 28px; font-weight: 700; }
+            Label { text: root.demonstration ? Strings.preview : Strings.subtitle; horizontal-alignment: right; vertical-alignment: center; }
+        }
+        Rectangle {
+            background: Theme.panel; border-radius: 10px;
+            VerticalLayout {
+                padding: 16px; spacing: 10px;
+                HorizontalLayout {
+                    spacing: 12px;
+                    VerticalLayout { spacing: 4px;
+                        Label { text: Strings.server; }
+                        LineEdit { text <=> root.server; enabled: !root.busy; accessible-label: Strings.server; }
+                    }
+                    VerticalLayout { spacing: 4px;
+                        Label { text: Strings.callsign; }
+                        LineEdit { text <=> root.callsign; enabled: !root.busy; accessible-label: Strings.callsign; }
+                    }
+                    VerticalLayout { spacing: 4px;
+                        Label { text: Strings.password; }
+                        LineEdit { text <=> root.password; input-type: InputType.password; enabled: !root.busy; accessible-label: Strings.password; }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 12px;
+                    VerticalLayout { spacing: 4px;
+                        Label { text: Strings.microphone; }
+                        ComboBox { model: root.inputs; current-index <=> root.input-index; enabled: !root.busy; accessible-label: Strings.microphone; }
+                    }
+                    VerticalLayout { spacing: 4px;
+                        Label { text: Strings.output; }
+                        ComboBox { model: root.outputs; current-index <=> root.output-index; enabled: !root.busy; accessible-label: Strings.output; }
+                    }
+                    Button { text: root.busy ? Strings.disconnect : Strings.connect; min-width: 220px;
+                        clicked => { if root.busy { root.disconnect-requested(); } else { root.connect-requested(); } }
+                    }
+                }
+                Label { text: Strings.privacy; wrap: word-wrap; }
+            }
+        }
+        Rectangle {
+            background: root.phase == 3 ? #573820 : Theme.panel;
+            border-radius: 8px; min-height: 46px;
+            HorizontalLayout { padding: 12px; spacing: 12px;
+                Text {
+                    text: root.phase == 1 ? Strings.connecting : root.phase == 2 ? Strings.receiving : root.phase == 3 ? Strings.transmitting : root.phase == 4 ? Strings.stopped : root.phase == 5 ? Strings.stopping : Strings.offline;
+                    color: root.phase == 3 ? Theme.tx : Theme.accent; font-weight: 700;
+                }
+                Text { text: root.rx-active ? Strings.rx : ""; color: Theme.accent; horizontal-alignment: right; }
+            }
+        }
+        HorizontalLayout {
+            spacing: 18px; min-height: 180px; vertical-stretch: 1;
+            VerticalLayout {
+                min-width: 290px; max-width: 360px; spacing: 8px;
+                Label { text: Strings.radios; }
+                ScrollView {
+                    VerticalLayout {
+                        spacing: 5px;
+                        for radio[index] in root.radios: Button {
+                            min-height: 36px;
+                            text: Strings.radio-label(index + 1, radio.enabled ? radio.frequency : Strings.off, radio.enabled ? radio.mode : "");
+                            primary: root.selected == index + 1;
+                            enabled: !root.editing;
+                            clicked => { root.select-radio(index + 1); }
+                        }
+                    }
+                }
+            }
+            Rectangle {
+                background: Theme.panel; border-radius: 10px;
+                VerticalLayout {
+                    padding: 18px; spacing: 14px;
+                    Text { text: Strings.selected-label(root.selected); color: Theme.accent; font-weight: 700; }
+                    Text {
+                        text: root.radios[root.selected - 1].enabled ? root.radios[root.selected - 1].frequency + " MHz  " + root.radios[root.selected - 1].mode : Strings.off;
+                        color: Theme.text; font-size: 30px; font-weight: 700;
+                    }
+                    ScrollView {
+                    VerticalLayout { spacing: 14px;
+                    HorizontalLayout {
+                        spacing: 12px;
+                        VerticalLayout { spacing: 4px;
+                            Label { text: Strings.frequency; }
+                            LineEdit { text <=> root.frequency; enabled: root.ready && !root.editing; accessible-label: Strings.frequency; }
+                        }
+                        VerticalLayout { spacing: 4px;
+                            Label { text: Strings.modulation; }
+                            ComboBox { model: ["AM", "FM"]; current-index <=> root.modulation; enabled: root.ready && !root.editing; accessible-label: Strings.modulation; }
+                        }
+                        Button { text: Strings.tune; enabled: root.ready && !root.editing; clicked => { root.edit-radio(0); } }
+                    }
+                    HorizontalLayout { spacing: 12px;
+                        VerticalLayout { spacing: 4px;
+                            Label { text: Strings.guard; }
+                            LineEdit { text <=> root.guard; enabled: root.ready && !root.editing; accessible-label: Strings.guard; }
+                        }
+                        Button { text: Strings.apply; accessible-label: Strings.guard; enabled: root.ready && !root.editing; clicked => { root.edit-radio(1); } }
+                    }
+                    HorizontalLayout { spacing: 12px;
+                        VerticalLayout { spacing: 4px;
+                            Label { text: Strings.key; }
+                            LineEdit { text <=> root.key; enabled: root.ready && !root.editing; accessible-label: Strings.key; }
+                        }
+                        Button { text: Strings.apply; accessible-label: Strings.key; enabled: root.ready && !root.editing; clicked => { root.edit-radio(2); } }
+                    }
+                    Button { text: Strings.disable; enabled: root.ready && !root.editing; clicked => { root.edit-radio(3); } }
+                    Label { text: root.editing ? Strings.editing : Strings.delivery; wrap: word-wrap; }
+                    }
+                    }
+                }
+            }
+        }
+        Rectangle {
+            min-height: 72px; max-height: 72px;
+            background: root.phase == 3 ? Theme.tx : root.can-talk ? Theme.accent : Theme.panel;
+            border-radius: 10px;
+            accessible-role: button; accessible-label: Strings.talk;
+            Text {
+                text: !root.can-talk ? Strings.unavailable : root.phase == 3 ? Strings.release : root.armed ? Strings.talk : Strings.arm;
+                color: root.can-talk ? Theme.background : Theme.muted;
+                horizontal-alignment: center; vertical-alignment: center;
+                font-size: 18px; font-weight: 700;
+            }
+            TouchArea {
+                enabled: root.can-talk;
+                pointer-event(event) => {
+                    if event.kind == PointerEventKind.cancel { root.pointer-input(2); }
+                    else if event.button == PointerEventButton.left {
+                        if event.kind == PointerEventKind.down { root.pointer-input(0); }
+                        if event.kind == PointerEventKind.up { root.pointer-input(1); }
+                    }
+                }
+                moved => { if self.mouse-x < 0px || self.mouse-y < 0px || self.mouse-x > self.width || self.mouse-y > self.height { root.pointer-input(2); } }
+            }
+        }
+        Label { text: Strings.ptt-help; horizontal-alignment: center; wrap: word-wrap; }
+        Text { text: Strings.problem(root.problem); color: Theme.error; wrap: word-wrap; min-height: 38px; }
+        HorizontalLayout {
+            Label { text: Strings.counters(root.sent, root.received); }
+            Label { text: Strings.license; horizontal-alignment: right; font-size: 11px; }
+        }
+    }
+}

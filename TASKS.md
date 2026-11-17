@@ -11,7 +11,9 @@ Status vocabulary: TODO, IN PROGRESS, AWAITING VALIDATION, DONE, BLOCKED. Update
 | F03 | DONE | Public repository published; Windows, Linux, and macOS host checks passed for bootstrap commit `86e3745` in [CI run 44012728630](https://github.com/KanikaBreed/dcs-srs-rust/actions/runs/44012728630). These checks cover the scaffold only. |
 | F04 | DONE | Verify main requires pull requests and all three host CI checks, including for administrators; force pushes and branch deletion are disabled. Private vulnerability reporting is enabled. |
 
-## First milestone: interoperability and platform feasibility
+## First milestone: Windows/Linux desktop interoperability and usability
+
+Desktop delivery precedes mobile. Android/iOS application and lifecycle work is deferred until the desktop milestone is validated.
 
 | ID | Status | Task and acceptance |
 |---|---|---|
@@ -22,15 +24,15 @@ Status vocabulary: TODO, IN PROGRESS, AWAITING VALIDATION, DONE, BLOCKED. Update
 | A02 | IN PROGRESS | `feat/radio-controls`: desktop adapter now connects to an owned SRS session through an expiring PTT controller, bounded mono mix, live radio edits and a timed/foreground-keyboard console. Generated bridge-to-stock-server and actual console/native-null checks pass locally, including release/expiry/policy/disconnect/cancellation. Still required: physical Windows/Linux headset/removal/listening checks, physical foreground-key validation, global/HID PTT, stock desktop-client audio exchange and WAN/soak validation. See docs/TOC_CONSOLE.md and docs/DEVICES.md. |
 | M01 | TODO | Android physical-device spike: service lifetime, microphone permission, locked-screen RX/TX, headset routing, interruptions. |
 | M02 | TODO | iPhone physical-device spike: audio session, system PTT, background wake-up, buffering, and gateway requirements. |
-| U01 | TODO | Validate Slint with native audio/lifecycle adapters, scaling, accessibility, keyboard, and phone/tablet input. |
+| U01 | IN PROGRESS | `feat/desktop-client`: Slint desktop window, ten-slot radio editor, foreground F8/pointer PTT, device/connection controls and authoritative radio snapshots implemented. Private-display/null-audio stock-server integration and synthetic RX/TX inspection added. Physical Windows/Linux input/audio, Wayland, screen readers and broader scaling remain pending; phone/tablet work is deferred. See docs/DESKTOP.md. |
 | L01 | TODO | Confirm redistributed dependency/asset licenses and feasible iOS distribution before committing to store delivery. |
 
 ## TOC alpha and beta
 
 | ID | Status | Task and acceptance |
 |---|---|---|
-| T01 | IN PROGRESS | `feat/radio-controls`: bounded live tune/modulation/guard/key/off commands implemented with current server policy and partial-TCP preservation. Still required: saved servers/presets and full UI. Original scope: Callsign, saved servers, coalition sign-in, preset import/export, radio tuning/modulation/guard, server policy. |
-| T02 | IN PROGRESS | `feat/radio-controls`: selected TX radio and multi-radio receive eligibility in the console implemented; gain/mute/stereo and UI remain pending. Original scope: Multi-radio monitoring, per-radio gain/mute/stereo routing, selected TX radio, prominent PTT and RX/TX state. |
+| T01 | IN PROGRESS | `feat/radio-controls`: bounded live tune/modulation/guard/key/off commands implemented with current server policy and partial-TCP preservation. Desktop connection/tuning/guard/key UI now implemented in `feat/desktop-client`; saved servers/presets remain pending. Original scope: Callsign, saved servers, coalition sign-in, preset import/export, radio tuning/modulation/guard, server policy. |
+| T02 | IN PROGRESS | `feat/radio-controls`: selected TX radio and multi-radio receive eligibility in the console implemented; desktop selected-radio/PTT/mixed-RX UI now implemented in `feat/desktop-client`; gain/mute/stereo and per-radio RX indicators remain pending. Original scope: Multi-radio monitoring, per-radio gain/mute/stereo routing, selected TX radio, prominent PTT and RX/TX state. |
 | T03 | IN PROGRESS | `feat/radio-controls`: opt-in foreground F8 PTT with release calibration, focus/stall invalidation and hold cap; synthetic terminal/native-null checks pass. Physical validation and global/HID/Wayland adapters remain pending. Original scope: Windows and Linux keyboard/HID PTT; supported Wayland portal integration and permission handling. |
 | T04 | TODO | Android TOC UI, user-started background session, device routing, network handover, and supported accessories. |
 | T05 | TODO | Reconnect, device changes, packet-loss handling, stale-audio policy, and multi-hour soak validation. |

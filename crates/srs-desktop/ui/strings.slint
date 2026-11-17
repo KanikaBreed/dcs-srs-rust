@@ -1,0 +1,71 @@
+// Stable property keys and gettext contexts; English fallback is shipped today.
+export global Strings {
+    out property<string> preview: @tr("desktop.preview" => "UI PREVIEW • No audio or network");
+    out property<string> title: @tr("desktop.title" => "DCS SRS Rust");
+    out property<string> subtitle: @tr("desktop.subtitle" => "TOC • Desktop preview");
+    out property<string> server: @tr("desktop.server" => "Server IP:port");
+    out property<string> callsign: @tr("desktop.callsign" => "Callsign");
+    out property<string> password: @tr("desktop.password" => "Coalition password");
+    out property<string> microphone: @tr("desktop.microphone" => "Microphone");
+    out property<string> output: @tr("desktop.output" => "Headphones / output");
+    out property<string> system-default: @tr("desktop.system-default" => "System default");
+    out property<string> connect: @tr("desktop.connect" => "Connect & open audio");
+    out property<string> disconnect: @tr("desktop.disconnect" => "Disconnect");
+    out property<string> offline: @tr("desktop.offline" => "OFFLINE • Audio closed");
+    out property<string> connecting: @tr("desktop.connecting" => "CONNECTING • PTT unavailable");
+    out property<string> receiving: @tr("desktop.receiving" => "READY • Monitoring tuned radios");
+    out property<string> transmitting: @tr("desktop.transmitting" => "TX • Local microphone transmission");
+    out property<string> stopped: @tr("desktop.stopped" => "STOPPED • Audio closed");
+    out property<string> stopping: @tr("desktop.stopping" => "DISCONNECTING • Releasing audio");
+    out property<string> rx: @tr("desktop.rx" => "RX • Incoming audio");
+    out property<string> radios: @tr("desktop.radios" => "RADIOS");
+    out property<string> frequency: @tr("desktop.frequency" => "Frequency (MHz)");
+    out property<string> modulation: @tr("desktop.modulation" => "Modulation");
+    out property<string> guard: @tr("desktop.guard" => "Guard (MHz; blank = off)");
+    out property<string> key: @tr("desktop.key" => "Simulated key (1–255; blank = off)");
+    out property<string> tune: @tr("desktop.tune" => "Apply tuning");
+    out property<string> apply: @tr("desktop.apply" => "Apply");
+    out property<string> disable: @tr("desktop.disable" => "Disable radio");
+    out property<string> off: @tr("desktop.off" => "OFF");
+    out property<string> talk: @tr("desktop.talk" => "HOLD TO TALK • F8");
+    out property<string> release: @tr("desktop.release" => "TRANSMITTING • Release to stop");
+    out property<string> arm: @tr("desktop.arm" => "TAP & RELEASE TO ARM • F8 or this pad");
+    out property<string> unavailable: @tr("desktop.unavailable" => "PTT UNAVAILABLE • Connect and tune a radio");
+    out property<string> ptt-help: @tr("desktop.ptt-help" => "Foreground only • 5 second hold limit • Release and press again after interruption");
+    out property<string> privacy: @tr("desktop.privacy" => "Connect opens the chosen microphone and output. Passwords are not saved. Use headphones.");
+    out property<string> editing: @tr("desktop.editing" => "Applying radio settings… PTT released");
+    out property<string> delivery: @tr("desktop.delivery" => "TX shows local activity; SRS does not confirm remote reception.");
+    out property<string> license: @tr("desktop.license" => "Independent SRS-compatible client • GPL-3.0-only • No warranty");
+    out property<string> error-address: @tr("error.address" => "Enter a server IP address and port, for example 127.0.0.1:5002.");
+    out property<string> error-callsign: @tr("error.callsign" => "Enter a callsign of 1–128 bytes without control characters.");
+    out property<string> error-password: @tr("error.password" => "The coalition password is too long (maximum 1024 bytes).");
+    out property<string> error-device: @tr("error.device" => "Audio device unavailable or unsupported. Select a 48 kHz mono/stereo device and reconnect.");
+    out property<string> error-connect: @tr("error.connect" => "Connection failed. Check the address, server availability and SRS version.");
+    out property<string> error-auth: @tr("error.auth" => "Coalition sign-in failed. Check the password and that the server enables External AWACS Mode.");
+    out property<string> error-radio: @tr("error.radio" => "Radio update failed or was denied by server policy. Review the displayed settings and apply again.");
+    out property<string> error-session: @tr("error.session" => "Session stopped. Check the server and audio devices, then reconnect.");
+    out property<string> error-runtime: @tr("error.runtime" => "Could not start the session worker. Close and reopen the application.");
+    out property<string> error-backlog: @tr("error.backlog" => "The radio request expired. Apply it again.");
+    out property<string> error-identity: @tr("error.identity" => "Could not create a secure session identity. Close and reopen the application.");
+    out property<string> error-frequency: @tr("error.frequency" => "Enter a frequency above 0.010 MHz and at most 10000 MHz, using a decimal point.");
+    public pure function problem(code: int) -> string {
+        code == 1 ? root.error-address :
+        code == 2 ? root.error-callsign :
+        code == 3 ? root.error-password :
+        code == 4 ? root.error-device :
+        code == 5 ? root.error-connect :
+        code == 6 ? root.error-auth :
+        code == 7 ? root.error-radio :
+        code == 8 ? root.error-session :
+        code == 9 ? root.error-runtime :
+        code == 10 ? root.error-backlog :
+        code == 11 ? root.error-identity :
+        code == 12 ? root.error-frequency :
+        ""
+    }
+    public pure function radio-label(slot: int, frequency: string, mode: string) -> string {
+        @tr("radio.label" => "{0}   ·   {1} {2}", slot, frequency, mode)
+    }
+    public pure function selected-label(slot: int) -> string { @tr("radio.selected" => "TRANSMIT RADIO {0}", slot) }
+    public pure function counters(sent: string, received: string) -> string { @tr("status.counters" => "Sent {0} frames • Played {1} mixed frames", sent, received) }
+}

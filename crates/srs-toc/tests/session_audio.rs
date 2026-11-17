@@ -32,6 +32,7 @@ async fn send(peer: &mut BufReader<TcpStream>, value: Value) {
 struct Harness {
     owner: Option<Controller>,
     status: watch::Receiver<Status>,
+    radios: watch::Receiver<[Radio; srs_client::RADIO_COUNT]>,
     task: JoinHandle<Result<Status, Error>>,
     input: CaptureCallback,
     output: PlaybackCallback,
@@ -78,8 +79,17 @@ impl Harness {
             owner.press(1).unwrap();
         }
         let (status_tx, status) = srs_toc::status_channel();
+        let (radios_tx, radios) = watch::channel(disabled_radios());
         let task = tokio::spawn(async move {
-            srs_toc::run(session, &mut capture, &mut playback, inputs, status_tx).await
+            srs_toc::run_observed(
+                session,
+                &mut capture,
+                &mut playback,
+                inputs,
+                status_tx,
+                Some(radios_tx),
+            )
+            .await
         });
         let mut bytes = [0; 8192];
         let (n, address) = timeout(Duration::from_secs(3), udp.recv_from(&mut bytes))
@@ -91,6 +101,7 @@ impl Harness {
         let mut h = Self {
             owner: Some(owner),
             status,
+            radios,
             task,
             input,
             output,
@@ -250,6 +261,38 @@ async fn policy_change_releases_capture_and_held_renewal_cannot_restart_it() {
     h.stop().await;
 }
 #[tokio::test]
+async fn radio_observer_tracks_server_policy_adjustments() {
+    let mut h = Harness::new(false).await;
+    assert_eq!(h.radios.borrow()[1].frequency_hz, 251e6);
+    h.owner
+        .as_mut()
+        .unwrap()
+        .change_radio(srs_client::commands::RadioChange::Key {
+            slot: 1,
+            key: Some(7),
+        })
+        .await
+        .unwrap();
+    assert_eq!(h.radios.borrow()[1].encryption_key, Some(7));
+    send(
+        &mut h.tcp,
+        json!({"MsgType":4,"ServerSettings":{"ALLOW_RADIO_ENCRYPTION":"false"}}),
+    )
+    .await;
+    timeout(Duration::from_secs(3), async {
+        loop {
+            if h.radios.borrow_and_update()[1].encryption_key.is_none() {
+                break;
+            }
+            h.radios.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(h.radios.borrow()[1].frequency_hz, 251e6);
+    h.stop().await;
+}
+#[tokio::test]
 async fn received_speakers_mix_and_policy_revocation_flushes_partial_playback() {
     let mut h = Harness::new(false).await;
     h.remote_frame(1, b'A').await;
@@ -324,6 +367,8 @@ async fn retuning_held_transmit_requires_new_press_and_new_wire_channel() {
         .unwrap();
     assert_eq!(radios[1].frequency_hz, 252e6);
     h.phase(Phase::Receiving).await;
+    assert_eq!(h.radios.borrow()[1].frequency_hz, 252e6);
+    assert_eq!(h.radios.borrow()[1].modulation, Modulation::FM);
     h.feed(4).await;
     let mut bytes = [0; 8192];
     assert!(h.udp.try_recv_from(&mut bytes).is_err());

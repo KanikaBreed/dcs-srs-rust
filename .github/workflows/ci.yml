@@ -39,7 +39,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends libasound2-dev pkg-config libopus0
+          sudo apt-get install --yes --no-install-recommends libasound2-dev pkg-config libopus0 libxkbcommon-dev xvfb xauth x11-utils fonts-dejavu-core
       - name: Check documentation and Rust workspace
         run: python scripts/check.py
       - name: Verify isolated native null audio

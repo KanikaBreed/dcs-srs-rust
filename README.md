@@ -4,7 +4,9 @@ A Rust client project for [DCS SimpleRadio Standalone](https://github.com/ciribo
 
 The first product is a standalone **TOC (tactical operations center) radio console**: monitor several radio nets and transmit with push-to-talk through an existing SRS server, without running DCS on the operator's device.
 
-**Status: integrated desktop development console.** Rust connects to SRS, authenticates coalition access, exchanges radio state, and sends/receives generated Opus audio through the unmodified SRS 2.4.1.0 server. UDP keepalives and session-bound PTT gating are implemented. Original C# codec wrappers verify Opus in both directions. Radio/key eligibility, bounded packet ordering, jitter buffering, and loss concealment are implemented and tested with generated audio. A desktop audio adapter, local device probe, and interactive [TOC development console](docs/TOC_CONSOLE.md) now connect microphone capture and playback to SRS with bounded timed transmit commands, live radio edits and opt-in [foreground F8 push-to-talk](docs/KEYBOARD.md). The integrated path is tested with generated audio and isolated native null devices; physical headset validation remains pending. Global/HID PTT, UI, and mobile applications remain pending; this is not yet an installable voice app.
+**Status: desktop client preview.** A [graphical Windows/Linux TOC client](docs/DESKTOP.md) now wraps the Rust voice engine with connection/device selection, ten radio slots, tuning/guard/key controls, foreground F8 and on-screen hold-to-talk. The shared engine exchanges generated Opus audio through stock SRS 2.4.1.0 and is checked against independent upstream fixtures and C# codec wrappers. Automated GUI/session checks use a private server/display and native null audio; physical headsets, listening, accessibility and actual input devices still need validation. Run `cargo run --locked -p srs-desktop` to open the setup window. This is a source-built preview, not an installer.
+
+**Delivery order: Windows/Linux desktop first, then mobile.** The [development console](docs/TOC_CONSOLE.md) remains available for diagnostics.
 
 ## Product direction
 
@@ -19,7 +21,7 @@ Standalone coalition operation uses SRS External AWACS Mode. Server administrato
 
 ## Development
 
-Install [Rust through rustup](https://rustup.rs), a native toolchain with a C compiler and CMake for your host, and Python 3.11 or newer. The Opus dependency builds its bundled native library. Linux also needs ALSA development headers and pkg-config (`libasound2-dev pkg-config` on Debian/Ubuntu). The checked-in toolchain file selects stable Rust with rustfmt and clippy.
+Install [Rust through rustup](https://rustup.rs), a native toolchain with a C compiler and CMake for your host, and Python 3.11 or newer. The Opus dependency builds its bundled native library. Linux also needs ALSA development headers and pkg-config (`libasound2-dev pkg-config libxkbcommon-dev` on Debian/Ubuntu). The checked-in toolchain file selects stable Rust with rustfmt and clippy.
 
 ```sh
 git clone https://github.com/KanikaBreed/dcs-srs-rust.git
