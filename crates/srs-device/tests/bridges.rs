@@ -409,7 +409,7 @@ fn stereo_interleaves_and_flushes_both_channels_without_callback_allocations() {
     let allocation = allocation_counter::measure(|| output.process(&mut pcm, start));
     assert_eq!(allocation.count_total, 0);
     assert_eq!(allocation.bytes_total, 0);
-    for pair in pcm.chunks_exact(2) {
+    for &pair in pcm.as_chunks::<2>().0 {
         assert_eq!(pair, [0.5, -0.25]);
     }
     writer.flush().unwrap();
@@ -420,7 +420,7 @@ fn stereo_interleaves_and_flushes_both_channels_without_callback_allocations() {
         .unwrap();
     let mut pcm = [0_i16; 222];
     output.process(&mut pcm, start);
-    for pair in pcm.chunks_exact(2) {
+    for &pair in pcm.as_chunks::<2>().0 {
         assert_eq!(pair, [0, 16384]);
     }
     output.process(&mut pcm, time(start, 80));

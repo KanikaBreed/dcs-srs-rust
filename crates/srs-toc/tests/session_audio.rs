@@ -644,7 +644,7 @@ async fn stereo_worker_routes_and_flushes_partial_output_and_mono_keeps_right_ra
         h.output.process(&mut pcm, Instant::now().into_std());
         assert!(pcm.iter().any(|s| s.abs() > 0.05));
         if channels == 2 {
-            assert!(pcm.chunks_exact(2).all(|p| p[0] == 0.0));
+            assert!(pcm.as_chunks::<2>().0.iter().all(|p| p[0] == 0.0));
         }
         levels[1] = RadioLevel::FULL.with_routing(Routing::Left);
         h.status.borrow_and_update();
@@ -658,7 +658,7 @@ async fn stereo_worker_routes_and_flushes_partial_output_and_mono_keeps_right_ra
         // Old partial right-channel audio must be invalidated before the next callback.
         h.output.process(&mut pcm, Instant::now().into_std());
         if channels == 2 {
-            assert!(pcm.chunks_exact(2).all(|p| p[1] == 0.0));
+            assert!(pcm.as_chunks::<2>().0.iter().all(|p| p[1] == 0.0));
         }
         let received = h.status.borrow().received_frames[1];
         h.remote_frame(1, b'C').await;
@@ -666,7 +666,7 @@ async fn stereo_worker_routes_and_flushes_partial_output_and_mono_keeps_right_ra
             loop {
                 h.output.process(&mut pcm, Instant::now().into_std());
                 if channels == 2 {
-                    assert!(pcm.chunks_exact(2).all(|p| p[1] == 0.0));
+                    assert!(pcm.as_chunks::<2>().0.iter().all(|p| p[1] == 0.0));
                 }
                 if h.status.borrow().received_frames[1] > received
                     && pcm.iter().any(|s| s.abs() > 0.05)

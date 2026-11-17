@@ -156,7 +156,9 @@ async fn burst(
         let mut played = [0f32; 960];
         output.process(&mut played, now.into_std());
         if played
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .any(|pair| pair[1 - receive_channel] != 0.0)
         {
             return Err("radio audio leaked into the unselected stereo channel".into());
