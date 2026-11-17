@@ -15,8 +15,8 @@ Status vocabulary: TODO, IN PROGRESS, AWAITING VALIDATION, DONE, BLOCKED. Update
 
 | ID | Status | Task and acceptance |
 |---|---|---|
-| P01 | TODO | Pin the tested SRS server/client version; extract independent sanitized TCP/UDP fixtures with source attribution. |
-| P02 | TODO | Implement bounded packet parsing/encoding; verify byte order, lengths, radio arrays, IDs, malformed data, and fuzz entry points. |
+| P01 | AWAITING VALIDATION | `feat/protocol-foundation`: pin clean upstream `d01f540c`; 12 synthetic fixtures verified against actual C# wire code and all four published UDP vectors. Source attribution and reproducible generator included. Live server/client version validation remains with P03. |
+| P02 | DONE | `feat/protocol-foundation`: implement `srs-protocol` UDP voice/keepalive codecs, TCP envelope and bounded incremental framing; independent vectors, malformed input, enum widths, unknown values, frame boundaries, and mutation tests. Voice/control fuzz targets compile; no fuzz campaign or live connection claimed. |
 | P03 | TODO | Authenticate External AWACS Mode and exchange radio state through an unmodified local SRS server; test rejected credentials and disabled EAM. |
 | A01 | TODO | Send and receive generated Opus audio between a Rust endpoint and stock SRS client; measure loss, jitter, and latency. |
 | A02 | TODO | Validate Windows/Linux capture, playback, device removal, and PTT release on an isolated test server. |

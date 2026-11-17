@@ -17,3 +17,10 @@ Thumbs.db
 .vscode/
 .idea/
 __pycache__/
+
+/tools/reference-fixtures/bin/
+/tools/reference-fixtures/obj/
+
+/fuzz/corpus/
+/fuzz/artifacts/
+/fuzz/coverage/

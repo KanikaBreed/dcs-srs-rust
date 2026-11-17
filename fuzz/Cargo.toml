@@ -1,0 +1,30 @@
+[package]
+name = "srs-protocol-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "GPL-3.0-only"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.13"
+srs-protocol = { path = "../crates/srs-protocol" }
+
+[[bin]]
+name = "voice"
+path = "fuzz_targets/voice.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "control"
+path = "fuzz_targets/control.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

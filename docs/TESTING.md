@@ -7,16 +7,18 @@ python3 scripts/check.py
 python3 scripts/check.py --docs-only
 ```
 
-Use `py -3` on Windows. Full checks validate relative Markdown file targets, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, and `cargo test --workspace --locked`.
+Use `py -3` on Windows. Full checks validate relative Markdown file targets, workspace and fuzz-target formatting, `cargo clippy --workspace --all-targets --locked -- -D warnings`, and `cargo test --workspace --locked`.
 
-The link check validates file existence only, not remote URLs or heading anchors. The scaffold has no behavior tests. CI runs these checks on Linux, Windows, and macOS hosts; it does not test physical audio hardware or build mobile apps yet.
+The link check validates file existence only, not remote URLs or heading anchors. The protocol suite tests upstream UDP vectors, control JSON, enum values, unknown fields, TCP fragmentation/coalescing, size limits, invalid input, and single-byte packet mutations. CI runs it on Linux, Windows, and macOS hosts. Linux also compiles fuzz targets and checks fixtures with unchanged upstream C# sources. CI does not test physical audio hardware or build mobile apps yet.
+
+For independent local verification, follow the [fixture guide](../crates/srs-protocol/tests/fixtures/README.md). It requires .NET SDK 10 and a clean pinned reference. The Rust round-trip example and C# oracle open no sockets or audio devices. For fuzzing, see [the target instructions](../fuzz/README.md).
 
 ## Test layers to implement
 
 | Layer | Required evidence |
 |---|---|
 | Core rules | Radio eligibility, state transitions, explicit PTT release, server settings, invalid input |
-| Protocol | Independent upstream vectors, truncated/malformed data, TCP framing, compatibility version handling |
+| Protocol (partly implemented) | Independent vectors, malformed data, framing, and field preservation are tested; live version negotiation remains pending |
 | Audio simulation | Generated signals, loss/reorder/duplication/jitter, bounded buffering, sample-rate conversion, clipping |
 | Stock SRS interoperability | Both voice directions and server policy with pinned unmodified reference versions |
 | Native desktop | Device selection/hotplug, keyboard and HID PTT, X11/Wayland, sleep/resume, CPU contention |

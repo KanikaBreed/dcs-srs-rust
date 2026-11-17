@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <!-- A deterministic fixture value, not the upstream checkout's release. -->
+    <AssemblyVersion>2.3.8.0</AssemblyVersion>
+  </PropertyGroup>
+  <Target Name="RequireReference" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(SrsReferenceRoot)' == ''" Text="Provide -p:SrsReferenceRoot=/path/to/pinned/upstream" />
+  </Target>
+  <ItemGroup>
+    <Compile Include="$(SrsReferenceRoot)/Common/Models/NetworkMessage.cs" Link="Upstream/Common/Models/NetworkMessage.cs" />
+    <Compile Include="$(SrsReferenceRoot)/Common/Models/UDPVoicePacket.cs" Link="Upstream/Common/Models/UDPVoicePacket.cs" />
+    <Compile Include="$(SrsReferenceRoot)/Common/Models/Player/SRClientBase.cs" Link="Upstream/Common/Models/Player/SRClientBase.cs" />
+    <Compile Include="$(SrsReferenceRoot)/Common/Models/Player/PlayerRadioInfoBase.cs" Link="Upstream/Common/Models/Player/PlayerRadioInfoBase.cs" />
+    <Compile Include="$(SrsReferenceRoot)/Common/Models/Player/RadioBase.cs" Link="Upstream/Common/Models/Player/RadioBase.cs" />
+    <Compile Include="$(SrsReferenceRoot)/Common/Models/Player/Modulation.cs" Link="Upstream/Common/Models/Player/Modulation.cs" />
+    <Compile Include="$(SrsReferenceRoot)/Common/Models/Player/LatLngPosition.cs" Link="Upstream/Common/Models/Player/LatLngPosition.cs" />
+    <Compile Include="$(SrsReferenceRoot)/Common/Models/Player/Ambient.cs" Link="Upstream/Common/Models/Player/Ambient.cs" />
+    <Compile Include="$(SrsReferenceRoot)/Common/Models/Player/Transponder.cs" Link="Upstream/Common/Models/Player/Transponder.cs" />
+    <Compile Include="$(SrsReferenceRoot)/Common/Models/RadioReceivingState.cs" Link="Upstream/Common/Models/RadioReceivingState.cs" />
+    <Compile Include="$(SrsReferenceRoot)/Common/Constants.cs" Link="Upstream/Common/Constants.cs" />
+    <Compile Include="$(SrsReferenceRoot)/Common/Helpers/JsonNetworkPropertiesResolver.cs" Link="Upstream/Common/Helpers/JsonNetworkPropertiesResolver.cs" />
+    <Compile Include="$(SrsReferenceRoot)/Common/Helpers/JsonNetworkIgnoreSerializationAttribute.cs" Link="Upstream/Common/Helpers/JsonNetworkIgnoreSerializationAttribute.cs" />
+    <Compile Include="$(SrsReferenceRoot)/Common/Helpers/PropertyChangedBaseClass.cs" Link="Upstream/Common/Helpers/PropertyChangedBaseClass.cs" />
+  </ItemGroup>
+</Project>
