@@ -3,7 +3,7 @@ import { Strings } from "strings.slint";
 export { Strings }
 export struct PeerRow { name: string, coalition: int }
 export struct PolicyRow { index: int, state: int }
-export struct RadioRow { volume: int, muted: bool, rx: bool, name: string, frequency: string, guard: string, key: string, mode: string, enabled: bool }
+export struct RadioRow { routing: int, volume: int, muted: bool, rx: bool, name: string, frequency: string, guard: string, key: string, mode: string, enabled: bool }
 global Theme {
     out property<color> background: #101b26;
     out property<color> panel: #192938;
@@ -44,6 +44,7 @@ export component MainWindow inherits Window {
     in-out property<string> radio-name;
     in-out property<float> volume: 100;
     in-out property<bool> muted;
+    in-out property<int> routing;
     in-out property<string> frequency: "251.000";
     in-out property<string> guard;
     in-out property<string> key;
@@ -84,6 +85,7 @@ export component MainWindow inherits Window {
     callback select-radio(int);
     callback edit-radio(int);
     callback edit-monitor(int, bool);
+    callback edit-routing(int);
     callback pointer-input(int);
     callback profile-action(int);
     callback profile-selected(int);
@@ -202,7 +204,7 @@ export component MainWindow inherits Window {
                                 enabled: !root.editing;
                                 clicked => { root.select-radio(index + 1); }
                             }
-                            Label { text: (radio.name == "" ? "" : radio.name + " · ") + Strings.monitor-state(radio.volume, radio.muted, radio.rx); wrap: word-wrap; color: radio.rx ? Theme.accent : Theme.muted; }
+                            Label { text: (radio.name == "" ? "" : radio.name + " · ") + Strings.monitor-state(radio.volume, radio.muted, radio.rx) + " · " + Strings.route-name(radio.routing); wrap: word-wrap; color: radio.rx ? Theme.accent : Theme.muted; }
                         }
                     }
                 }
@@ -228,6 +230,13 @@ export component MainWindow inherits Window {
                                 toggled => { root.edit-monitor(round(root.volume), root.muted); }
                             }
                         }
+                        HorizontalLayout { spacing: 12px;
+                            Label { text: Strings.routing; vertical-alignment: center; }
+                            ComboBox { model: [Strings.route-name(0), Strings.route-name(1), Strings.route-name(2)]; current-index <=> root.routing; enabled: root.can-edit; accessible-label: Strings.routing;
+                                selected(value) => { root.edit-routing(self.current-index); }
+                            }
+                        }
+                        Label { text: Strings.routing-help; wrap: word-wrap; }
                         Label { text: Strings.monitor-help; wrap: word-wrap; }
                     }
                     HorizontalLayout { spacing: 12px;

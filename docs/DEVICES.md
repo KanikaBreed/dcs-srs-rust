@@ -24,7 +24,7 @@ cargo run --locked -p srs-device --bin audio_probe -- loopback --input default -
 
 Tone plays a generated 700 Hz signal at 10% full-scale with a short fade. Capture reports frame count, RMS, clipping count, and dropped blocks; it does not play or save the microphone. Loopback captures your voice, converts to SRS input, runs Opus encode/decode, and plays it locally. Use headphones for loopback to avoid speaker feedback. No command records audio or contacts a server. The process prints its active mode before opening streams and releases them on exit. Ctrl+C terminates the process and closes its devices; there is no network PTT to leave active.
 
-Only **48 kHz, one or two channels, f32/i16/u16** configurations are accepted. The adapter prefers float, mono input, and stereo output; it averages input channels and duplicates mono output. It requests a 480-sample/10 ms period where advertised, otherwise uses the backend default. Unsupported rates/channels/formats return an error. There is no automatic fallback to another device or silent 44.1 kHz conversion. Startup requests a three-second backend timeout, but CPAL documents that some backends do not honor it.
+Only **48 kHz, one or two channels, f32/i16/u16** configurations are accepted. The adapter prefers float, mono input, and stereo output; it averages input channels, duplicates mono enqueue data and preserves explicitly enqueued stereo output. A one-channel callback averages explicit stereo input; the TOC worker uses the full-level mono mix for one-channel devices. It requests a 480-sample/10 ms period where advertised, otherwise uses the backend default. Unsupported rates/channels/formats return an error. There is no automatic fallback to another device or silent 44.1 kHz conversion. Startup requests a three-second backend timeout, but CPAL documents that some backends do not honor it.
 
 ## Callback and worker contract
 
@@ -38,7 +38,7 @@ The adapter follows the existing SRS 16 kHz/640-sample encoder and 48 kHz/1920-s
 | Capture device stall | No nonempty capture callbacks for 250 ms while armed permanently stops the bridge, even if its controller keeps renewing |
 | Capture handoff | Drops blocks aged 80 ms or more; rechecks a completed frame after conversion and before use |
 | Resampling | Worker-only 97-tap Blackman-windowed sinc, 7 kHz cutoff, 48-to-16 kHz decimation; 1 ms filter group delay |
-| Output queue | Three complete 1920-sample/40 ms frames; enqueue is all-or-nothing |
+| Output queue | Three complete stereo frames of 2 × 1920 samples/40 ms (23,040 PCM bytes total); mono/stereo enqueue is all-or-nothing |
 | Output overflow | Returns `QueueFull` and changes generation so the callback discards its backlog |
 | Output stale/flush | Drops frames aged 80 ms or more and invalidates partially played frames on the next callback |
 | Callback size | At most 4800 frames/100 ms, with complete mono/stereo sample groups; invalid sizes stop capture/output and output remains silent |
@@ -74,3 +74,5 @@ On Windows and Linux, select a headset, run the tone, then capture, then headpho
 A02 remains incomplete until physical checks and integrated SRS/PTT behavior are validated. Android/iOS audio sessions, permission/lifecycle adapters, headset controls, packaging, and UI remain separate tasks.
 
 References: [CPAL 0.18.2](https://docs.rs/cpal/0.18.2/cpal/), [CPAL stream construction/timeout contract](https://docs.rs/cpal/0.18.2/cpal/traits/trait.DeviceTrait.html), [rtrb 0.4.1](https://docs.rs/rtrb/0.4.1/rtrb/), and [allocation-counter](https://docs.rs/allocation-counter/0.8.1/allocation_counter/).
+
+Stereo bridge check (local debug build, simulated 400 seconds, no devices): 10,000 codec frames / 40,000 capture blocks, zero queue drops, three expected startup underrun callbacks, maximum capture frame age 30 ms. Measured 6.569 s wall, 6.536 s user CPU, 0.001 s system CPU and 14,952 KiB peak process RSS with `bridge_probe`. This is a single-voice synthetic throughput sample, not real-time hardware latency or a mobile power measurement.

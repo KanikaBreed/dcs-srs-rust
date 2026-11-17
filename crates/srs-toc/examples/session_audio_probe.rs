@@ -42,11 +42,16 @@ async fn exercise(address: SocketAddr, id: u8) -> Result<(), Box<dyn Error>> {
     let receiver = connect(address, id + 1).await?;
     let now = Instant::now().into_std();
     let (mut input, mut capture, input_signal) = capture_bridge(1, now)?;
-    let (mut writer, mut reverse_output, reverse_output_signal) = playback_bridge(1)?;
+    let (mut writer, mut reverse_output, reverse_output_signal) = playback_bridge(2)?;
     let (mut reverse_input, mut receive_input, reverse_input_signal) = capture_bridge(1, now)?;
-    let (mut receive_output, mut output, output_signal) = playback_bridge(1)?;
+    let (mut receive_output, mut output, output_signal) = playback_bridge(2)?;
     let (mut owner, commands) = srs_toc::controls();
     let (mut receive_owner, receive_commands) = srs_toc::controls();
+    let mut levels = srs_client::receive::DEFAULT_MONITOR;
+    levels[1] = levels[1].with_routing(srs_client::receive::Routing::Left);
+    owner.set_monitor(levels);
+    levels[1] = levels[1].with_routing(srs_client::receive::Routing::Right);
+    receive_owner.set_monitor(levels);
     let (status, mut tx_status) = srs_toc::status_channel();
     let (receive_status, mut rx_status) = srs_toc::status_channel();
     let tx = tokio::spawn(async move {
@@ -80,6 +85,7 @@ async fn exercise(address: SocketAddr, id: u8) -> Result<(), Box<dyn Error>> {
         &mut tx_status,
         &mut rx_status,
         "forward",
+        1,
     )
     .await?;
     burst(
@@ -89,6 +95,7 @@ async fn exercise(address: SocketAddr, id: u8) -> Result<(), Box<dyn Error>> {
         &mut rx_status,
         &mut tx_status,
         "reverse",
+        0,
     )
     .await?;
     drop(owner);
@@ -111,7 +118,7 @@ async fn exercise(address: SocketAddr, id: u8) -> Result<(), Box<dyn Error>> {
         return Err("session audio queue drop, frame count or teardown check failed".into());
     }
     println!(
-        "PASS: same two sessions exchanged generated capture in both directions; zero queue drops and all bridges stopped."
+        "PASS: same two sessions exchanged generated capture in both directions; isolated left/right reception, zero queue drops and all bridges stopped."
     );
     Ok(())
 }
@@ -122,6 +129,7 @@ async fn burst(
     sender_status: &mut watch::Receiver<Status>,
     receiver_status: &mut watch::Receiver<Status>,
     label: &str,
+    receive_channel: usize,
 ) -> Result<(), Box<dyn Error>> {
     owner.press(1)?;
     phase(sender_status, Phase::Transmitting).await?;
@@ -145,8 +153,14 @@ async fn burst(
             owner.release()?;
         }
         let start = Instant::now();
-        let mut played = [0f32; 480];
+        let mut played = [0f32; 960];
         output.process(&mut played, now.into_std());
+        if played
+            .chunks_exact(2)
+            .any(|pair| pair[1 - receive_channel] != 0.0)
+        {
+            return Err("radio audio leaked into the unselected stereo channel".into());
+        }
         peak_worker_us = peak_worker_us.max(start.elapsed().as_micros());
         if played.iter().any(|n| n.abs() > 0.02) {
             first_audio_ms.get_or_insert(began.elapsed().as_millis());
@@ -162,7 +176,7 @@ async fn burst(
         .into());
     }
     println!(
-        "{{\"direction\":\"{label}\",\"sent_frames\":{sent},\"mixed_frames_including_plc\":{mixed},\"audible_callbacks\":{audible_callbacks},\"first_capture_to_audible_ms\":{},\"max_playback_bridge_us\":{peak_worker_us}}}",
+        "{{\"direction\":\"{label}\",\"receive_channel\":{receive_channel},\"sent_frames\":{sent},\"mixed_frames_including_plc\":{mixed},\"audible_callbacks\":{audible_callbacks},\"first_capture_to_audible_ms\":{},\"max_playback_bridge_us\":{peak_worker_us}}}",
         first_audio_ms.ok_or("no audio")?
     );
     Ok(())

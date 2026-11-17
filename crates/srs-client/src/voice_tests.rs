@@ -610,3 +610,104 @@ async fn single_speaker_playout_applies_local_gain_and_keeps_muted_metadata() {
     assert_eq!(frame.kind, srs_audio::jitter::FrameKind::Decoded);
     assert!(pcm.iter().all(|sample| *sample == 0));
 }
+
+#[tokio::test(start_paused = true)]
+async fn stereo_routes_once_per_speaker_and_mono_preserves_all_radios() {
+    use crate::receive::{DEFAULT_MONITOR, QueueOutcome, RadioLevel, Routing};
+    let (mut voice, _server, _, auth, _live) = registered().await;
+    update_policy(&auth, |p| {
+        p.radios[2] = p.radios[1];
+        p.radios[2].frequency_hz = 252e6;
+    });
+    let mut decoder = srs_audio::Decoder::new().unwrap();
+    let mut expected = [0; srs_audio::OUTPUT_SAMPLES];
+    let mut output = [[0; srs_audio::OUTPUT_SAMPLES]; 2];
+    voice.press_ptt(1).unwrap();
+    for sequence in 1..=4 {
+        for (speaker, hz) in [(b'B', 251e6), (b'C', 252e6)] {
+            let mut packet = audio_packet(&voice, sequence);
+            packet.original_client_id = ClientId::from_bytes(&[speaker; 22]).unwrap();
+            packet.frequencies[0].hz = hz;
+            assert_eq!(voice.buffer_voice(&packet).unwrap(), QueueOutcome::Queued);
+            assert_eq!(
+                voice.buffer_voice(&packet).unwrap(),
+                QueueOutcome::Duplicate
+            );
+            if speaker == b'B' {
+                decoder.decode(&packet.audio, &mut expected).unwrap();
+            }
+        }
+        let mut levels = DEFAULT_MONITOR;
+        levels[1] = RadioLevel::new(50, false)
+            .unwrap()
+            .with_routing(match sequence {
+                1 | 4 => Routing::Left,
+                2 => Routing::Both,
+                _ => Routing::Right,
+            });
+        levels[2] = RadioLevel::new(25, sequence == 3)
+            .unwrap()
+            .with_routing(Routing::Right);
+        voice.set_monitor(levels); // Applies to already buffered frames, without another decode.
+        tokio::time::advance(Duration::from_millis(if sequence == 1 { 80 } else { 40 })).await;
+        let mix = if sequence == 4 {
+            voice.poll_mix(&mut output[0]).unwrap()
+        } else {
+            voice.poll_stereo(&mut output).unwrap()
+        };
+        assert_eq!(mix.speakers, 2);
+        assert_eq!(mix.received_radios, (1 << 1) | (1 << 2));
+        assert_eq!(mix.audible_speakers, if sequence == 3 { 1 } else { 2 });
+        let gains = match sequence {
+            1 => [50, 25],
+            2 => [50, 75],
+            3 => [0, 50],
+            _ => [75, 0],
+        };
+        for channel in 0..if sequence == 4 { 1 } else { 2 } {
+            for (actual, sample) in output[channel].iter().zip(expected) {
+                assert_eq!(*actual, (i32::from(sample) * gains[channel] / 100) as i16);
+            }
+        }
+        assert!(
+            voice.is_transmitting(),
+            "local routing changed TX eligibility"
+        );
+        assert_eq!(voice.poll_stereo(&mut output).unwrap().speakers, 0);
+        assert!(output.iter().flatten().all(|s| *s == 0));
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn stereo_clips_each_channel_only_after_summing() {
+    let (mut voice, _server, _, _auth, _live) = registered().await;
+    let mut packet = audio_packet(&voice, 1);
+    let mut expected = [0; srs_audio::OUTPUT_SAMPLES];
+    srs_audio::Decoder::new()
+        .unwrap()
+        .decode(&packet.audio, &mut expected)
+        .unwrap();
+    for speaker in b'B'..=b'E' {
+        packet.original_client_id = ClientId::from_bytes(&[speaker; 22]).unwrap();
+        voice.buffer_voice(&packet).unwrap();
+    }
+    tokio::time::advance(Duration::from_millis(80)).await;
+    let mut output = [[0; srs_audio::OUTPUT_SAMPLES]; 2];
+    let mix = voice.poll_stereo(&mut output).unwrap();
+    assert_eq!(mix.speakers, 4);
+    assert_eq!(
+        mix.clipped_samples,
+        2 * expected
+            .iter()
+            .filter(|s| !(i16::MIN as i32..=i16::MAX as i32).contains(&(i32::from(**s) * 4)))
+            .count()
+    );
+    assert!(mix.clipped_samples > 0);
+    assert_eq!(output[0], output[1]);
+    for (actual, sample) in output[0].iter().zip(expected) {
+        assert_eq!(
+            *actual,
+            (i32::from(sample) * 4).clamp(i16::MIN as i32, i16::MAX as i32) as i16
+        );
+    }
+}

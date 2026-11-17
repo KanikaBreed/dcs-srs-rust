@@ -45,6 +45,9 @@ struct Harness {
 }
 impl Harness {
     async fn new(held_before_ready: bool) -> Self {
+        Self::with_channels(held_before_ready, 1).await
+    }
+    async fn with_channels(held_before_ready: bool, channels: u16) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let udp = UdpSocket::bind(address).await.unwrap();
@@ -74,7 +77,7 @@ impl Harness {
         let (tcp, session) = tokio::join!(accept, connect);
         let (input, mut capture, input_signal) =
             capture_bridge(1, Instant::now().into_std()).unwrap();
-        let (mut playback, output, output_signal) = playback_bridge(1).unwrap();
+        let (mut playback, output, output_signal) = playback_bridge(channels).unwrap();
         let (mut owner, inputs) = srs_toc::controls();
         if held_before_ready {
             owner.press(1).unwrap();
@@ -619,4 +622,69 @@ async fn session_details_follow_roster_and_policy_without_private_fields() {
         }
     }
     h.stop().await;
+}
+
+#[tokio::test]
+async fn stereo_worker_routes_and_flushes_partial_output_and_mono_keeps_right_radio() {
+    use srs_client::receive::{DEFAULT_MONITOR, RadioLevel, Routing};
+    for channels in [1, 2] {
+        let mut h = Harness::with_channels(false, channels).await;
+        let mut levels = DEFAULT_MONITOR;
+        levels[1] = RadioLevel::FULL.with_routing(Routing::Right);
+        h.owner.as_mut().unwrap().set_monitor(levels);
+        h.remote_frame(1, b'B').await;
+        timeout(Duration::from_secs(3), async {
+            while h.status.borrow_and_update().received_frames[1] == 0 {
+                h.status.changed().await.unwrap();
+            }
+        })
+        .await
+        .unwrap();
+        let mut pcm = vec![0_f32; 480 * channels as usize];
+        h.output.process(&mut pcm, Instant::now().into_std());
+        assert!(pcm.iter().any(|s| s.abs() > 0.05));
+        if channels == 2 {
+            assert!(pcm.chunks_exact(2).all(|p| p[0] == 0.0));
+        }
+        levels[1] = RadioLevel::FULL.with_routing(Routing::Left);
+        h.status.borrow_and_update();
+        h.owner.as_mut().unwrap().set_monitor(levels);
+        // In this receive-only worker, each publication follows processing the
+        // latest monitor command. Await that boundary rather than an OS sleep.
+        timeout(Duration::from_secs(3), h.status.changed())
+            .await
+            .unwrap()
+            .unwrap();
+        // Old partial right-channel audio must be invalidated before the next callback.
+        h.output.process(&mut pcm, Instant::now().into_std());
+        if channels == 2 {
+            assert!(pcm.chunks_exact(2).all(|p| p[1] == 0.0));
+        }
+        let received = h.status.borrow().received_frames[1];
+        h.remote_frame(1, b'C').await;
+        timeout(Duration::from_secs(3), async {
+            loop {
+                h.output.process(&mut pcm, Instant::now().into_std());
+                if channels == 2 {
+                    assert!(pcm.chunks_exact(2).all(|p| p[1] == 0.0));
+                }
+                if h.status.borrow().received_frames[1] > received
+                    && pcm.iter().any(|s| s.abs() > 0.05)
+                {
+                    break;
+                }
+                sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            timeout(Duration::from_millis(20), h.tcp.fill_buf())
+                .await
+                .is_err(),
+            "routing wrote to TCP"
+        );
+        assert_eq!(h.status.borrow().playback_overflows, 0);
+        h.stop().await;
+    }
 }

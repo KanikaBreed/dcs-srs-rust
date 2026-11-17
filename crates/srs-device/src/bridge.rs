@@ -387,11 +387,12 @@ impl Drop for CaptureReader {
 
 #[derive(Clone, Copy)]
 struct PlaybackFrame {
-    samples: [i16; OUTPUT_SAMPLES],
+    samples: [[i16; OUTPUT_SAMPLES]; 2],
     at: Instant,
     generation: u64,
 }
 pub struct PlaybackWriter {
+    channels: u16,
     producer: Producer<PlaybackFrame>,
     shared: Arc<Shared>,
 }
@@ -412,6 +413,7 @@ pub fn playback_bridge(
     let shared = Arc::new(Shared::default());
     Ok((
         PlaybackWriter {
+            channels,
             producer,
             shared: shared.clone(),
         },
@@ -426,6 +428,9 @@ pub fn playback_bridge(
     ))
 }
 impl PlaybackWriter {
+    pub fn channels(&self) -> u16 {
+        self.channels
+    }
     pub fn stop_signal(&self) -> StopSignal {
         StopSignal(self.shared.clone())
     }
@@ -434,11 +439,21 @@ impl PlaybackWriter {
     }
     /// All-or-nothing 40 ms frame enqueue; overflow invalidates the backlog.
     pub fn enqueue(&mut self, samples: &[i16; OUTPUT_SAMPLES], now: Instant) -> Result<(), Error> {
+        self.enqueue_stereo(samples, samples, now)
+    }
+    /// Planar stereo queued atomically, with the same stale/flush bounds as mono.
+    /// A one-channel callback averages stereo input; enqueue(mono) is unchanged.
+    pub fn enqueue_stereo(
+        &mut self,
+        left: &[i16; OUTPUT_SAMPLES],
+        right: &[i16; OUTPUT_SAMPLES],
+        now: Instant,
+    ) -> Result<(), Error> {
         if self.shared.stopped.load(Ordering::Acquire) {
             return Err(Error::Stopped);
         }
         let frame = PlaybackFrame {
-            samples: *samples,
+            samples: [*left, *right],
             at: now,
             generation: self.shared.generation.load(Ordering::Acquire),
         };
@@ -504,8 +519,14 @@ impl PlaybackCallback {
                 }
             }
             if let Some(current) = &self.current {
-                let sample = T::from_sample(current.samples[self.position] as f32 / 32768.0);
-                frame.fill(sample);
+                let left = i32::from(current.samples[0][self.position]);
+                let right = i32::from(current.samples[1][self.position]);
+                if self.channels == 1 {
+                    frame[0] = T::from_sample((left + right) as f32 / 65536.0);
+                } else {
+                    frame[0] = T::from_sample(left as f32 / 32768.0);
+                    frame[1] = T::from_sample(right as f32 / 32768.0);
+                }
                 self.position += 1;
                 if self.position == OUTPUT_SAMPLES {
                     self.current = None;
