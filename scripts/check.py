@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check local Markdown file links and the dependency-free Rust workspace."""
+"""Check local Markdown file links and the Rust workspace."""
 
 import argparse
 import os
@@ -56,6 +56,7 @@ def main():
         return 0
     commands = [
         ["cargo", "fmt", "--all", "--", "--check"],
+        ["cargo", "fmt", "--manifest-path", "fuzz/Cargo.toml", "--all", "--", "--check"],
         ["cargo", "clippy", "--workspace", "--all-targets", "--locked", "--", "-D", "warnings"],
         ["cargo", "test", "--workspace", "--locked"],
     ]

@@ -2,3 +2,5 @@
 *.png binary
 *.wav binary
 *.opus binary
+*.bin binary
+*.jsonl text eol=lf

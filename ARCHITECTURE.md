@@ -2,7 +2,9 @@
 
 ## Present implementation
 
-This is a bootstrap workspace. Only `crates/srs-core` exists as a Rust library scaffold, with documentation and an unsafe-code prohibition. It has no protocol parser, networking, audio, UI, public API, or behavioral tests. The following architecture is a design target, not an inventory of implemented features.
+`crates/srs-protocol` implements UDP voice packets and identity keepalives, a TCP control envelope, and bounded incremental newline framing. It has independent C# fixtures, malformed-input/regression tests, and fuzz entry points. Nested client/radio control payloads are preserved as JSON; typed domain rules are not implemented yet.
+
+`crates/srs-core` remains a library scaffold. There are no sockets, session/authentication logic, codecs, audio devices, or UI. The following component map distinguishes the larger design target from this initial wire implementation.
 
 ## Boundaries
 
@@ -20,7 +22,7 @@ flowchart TB
 | Planned component | Responsibility | Exclusions |
 |---|---|---|
 | `srs-core` | Radio identities, eligibility rules, PTT/session state, configuration models | UI, native device handles, network I/O |
-| `srs-protocol` | Bounded TCP JSON framing, models, UDP byte encoding/decoding, compatibility fixtures | Device capture, arbitrary protocol changes |
+| `srs-protocol` (implemented wire layer) | Bounded TCP JSON envelope/framing, UDP encoding/decoding, independent fixtures | Typed radio rules, device capture, sockets |
 | `srs-client` | Session orchestration, reconnect, control updates, voice transport | UI framework dependencies |
 | `srs-audio` | Codec adapters, jitter buffer, resampling, mixing, effects, bounded audio queues | UI state mutation, unbounded buffering |
 | Platform adapters | Audio I/O, device changes, hardware PTT, permissions, lifecycle | Duplicated radio/protocol rules |
@@ -38,7 +40,7 @@ Add crates when they have a concrete responsibility and implementation. Do not c
 - Slint as the initial cross-platform UI candidate.
 - Kotlin/Java and Swift/Objective-C adapters where native lifecycle APIs require them.
 
-These dependencies are not selected by the scaffold and are not in Cargo.lock. Confirm them through a physical-device spike before binding the product to a toolkit. Shared Rust does not remove platform-specific audio-session work.
+Serde and serde_json are now used for the control envelope and locked in Cargo.lock. Tokio, codec/device bindings, and UI dependencies remain candidates. Confirm device/UI choices through a physical-device spike. Shared Rust does not remove platform-specific audio-session work. libfuzzer-sys is isolated in a separate development-only fuzz workspace.
 
 ## Threading and ownership
 
@@ -56,8 +58,12 @@ DCS cockpit/terrain state belongs to a later adapter. A phone in TOC mode does n
 
 - Root Markdown: onboarding, agent rules, architecture, tasks, notices.
 - `docs/`: scope, protocol, testing, platform, UI, reporting, and release guides.
-- `crates/srs-core/`: the initial library scaffold.
-- `scripts/check.py`: dependency-free local checks.
+- `crates/srs-core/`: the radio-domain scaffold.
+- `crates/srs-protocol/`: wire codecs, tests, fixtures, and an offline round-trip example.
+- `tools/reference-fixtures/`: .NET harness linking unchanged external upstream sources.
+- `scripts/reference_fixtures.py`: pinned-source and independent-fixture verification.
+- `fuzz/`: isolated voice/control libFuzzer targets.
+- `scripts/check.py`: standard-library Python driver for documentation and Cargo checks.
 - `.github/`: CI and issue/PR templates.
 
 Keep this inventory synchronized when actual modules are added.

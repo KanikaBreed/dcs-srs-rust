@@ -2,7 +2,19 @@
 
 ## Reference baseline
 
-Initial source review: [DCS-SimpleRadioStandalone at cc07367ac89c62a02297c8f58339dce837d40485](https://github.com/ciribob/DCS-SimpleRadioStandalone/tree/cc07367ac89c62a02297c8f58339dce837d40485), identifying itself as 2.3.8.0. This is the reviewed baseline, not a claim that it is the newest release or that interoperability has been demonstrated. Pin the actual server/client builds in each test report.
+The implementation and independent fixture oracle pin [DCS-SimpleRadioStandalone at d01f540ce5e363e9ac841775c8f7e2253138cd81](https://github.com/ciribob/DCS-SimpleRadioStandalone/tree/d01f540ce5e363e9ac841775c8f7e2253138cd81), fetched from upstream master for this first implementation. The earlier scope reviewed `cc07367a` (2.3.8.0); the voice-packet layout is unchanged. The new source derives its version from the entry assembly. The fixture harness explicitly supplies `2.3.8.0` for reproducible JSON, not as a claim about the newer source release. A live server/client version remains to be validated in P03.
+
+Create a separate clean reference checkout, preserving any existing SRS modifications:
+
+```sh
+git init ../DCS-SRS-reference
+git -C ../DCS-SRS-reference remote add origin https://github.com/ciribob/DCS-SimpleRadioStandalone.git
+git -C ../DCS-SRS-reference sparse-checkout set Common DCS-SR-CommonTests
+git -C ../DCS-SRS-reference fetch --depth 1 --filter=blob:none origin d01f540ce5e363e9ac841775c8f7e2253138cd81
+git -C ../DCS-SRS-reference checkout --detach FETCH_HEAD
+```
+
+Use a new directory for these initialization commands. Source and fixture details are in the [corpus guide](../crates/srs-protocol/tests/fixtures/README.md).
 
 Useful upstream files:
 
@@ -52,4 +64,12 @@ Radio encryption fields simulate radio key matching. They do not provide cryptog
 6. Verify mixed-client coalition, guard, modulation, key, and radio eligibility behavior.
 7. Add fuzzing and network impairment scenarios before public beta.
 
-Preserve SRS behavior where it is needed for interoperability, but do not reproduce unsafe parser behavior. Record intentional differences and the supported-version matrix here when evidence exists. There is no conformance result yet.
+## Implemented checks and deliberate limits
+
+- `srs-protocol` passes independent upstream UDP vectors and C#-serialized control fixtures. Rust outputs are accepted by the original C# model/decoder harness; UDP bytes match exactly and JSON values match semantically. This is offline wire evidence, not a connected-session result.
+- UDP lengths are checked before slicing/allocation; audio is borrowed. Frequency entries are bounded by the 16-bit packet size, not artificially capped to the UI radio count. Unknown modulation bytes and numeric control-message types are preserved.
+- Identities must have the standard 22-character URL-safe ASCII shape. Invalid lengths/identity characters and negative/non-finite frequencies are rejected, even if the permissive C# decoder would accept them. Empty audio/frequency segments are structurally allowed; a future session layer decides whether to use them.
+- TCP emits one message per decoder call. It enforces a local 1 MiB frame limit (excluding LF), accepts CRLF, bounds serialized output, and fails closed after malformed or oversized frames. EOF with a partial frame is an error. This size cap is a Rust resource policy, not a limit promised by SRS; very large SYNC messages need evaluation.
+- MsgType is required and numeric. Unlike C# default initialization, an absent type is not silently treated as UPDATE. Null optional fields are omitted on re-encoding; unknown fields are retained. JSON recursion limits remain enabled.
+- Client/radio payloads are generic JSON objects in this increment. Authentication, version negotiation, domain validation, timing behavior, and Opus/audio processing remain future work.
+- Fuzz targets compile; no coverage-guided fuzz campaign is claimed. See [fuzz instructions](../fuzz/README.md).

@@ -6,7 +6,7 @@ These instructions apply to this repository. Read this file, [ARCHITECTURE.md](A
 
 Build an SRS-compatible Rust radio client for Windows, Linux, Android, and iOS. The initial product is a standalone TOC console with full voice and push-to-talk. See [scope](docs/SCOPE.md).
 
-Use upstream SRS as the reference for wire format and observable radio behavior, not as a requirement to reproduce its implementation or desktop layout. Before porting behavior, inspect the relevant upstream files and record the revision. A sibling checkout of `DCS-SimpleRadioStandalone` is useful but optional; read pinned public sources if it is absent. Treat reference checkouts as read-only, including any uncommitted work they contain.
+Use upstream SRS as the reference for wire format and observable radio behavior, not as a requirement to reproduce its implementation or desktop layout. Before porting behavior, inspect the relevant upstream files and record the revision. A clean sibling checkout such as `DCS-SRS-reference` is useful; the fixture oracle requires the exact revision documented in [PROTOCOL.md](docs/PROTOCOL.md). Existing modified SRS checkouts can be read for context but must not be used as the independent fixture source. Treat reference checkouts as read-only, including any uncommitted work they contain.
 
 Preserve packet encoding, framing, numeric enum values, units, identity, coalition authentication, server settings, radio eligibility, and timing semantics. Keep our application version separate from the SRS compatibility version. Do not change the protocol to simplify a client implementation. Document intentional product differences and compatibility limits.
 

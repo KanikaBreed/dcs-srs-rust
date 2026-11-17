@@ -35,3 +35,26 @@ jobs:
         run: rustup show
       - name: Check documentation and Rust workspace
         run: python scripts/check.py
+      - name: Compile fuzz targets
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo check --manifest-path fuzz/Cargo.toml --bins --locked
+      - name: Set up .NET for independent upstream verification
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Verify fixtures against pinned upstream C#
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+          DOTNET_NOLOGO: '1'
+        run: |
+          srs_reference="$RUNNER_TEMP/srs-reference"
+          git init "$srs_reference"
+          git -C "$srs_reference" remote add origin https://github.com/ciribob/DCS-SimpleRadioStandalone.git
+          git -C "$srs_reference" sparse-checkout set Common DCS-SR-CommonTests
+          git -C "$srs_reference" fetch --depth 1 --filter=blob:none origin d01f540ce5e363e9ac841775c8f7e2253138cd81
+          git -C "$srs_reference" checkout --detach FETCH_HEAD
+          cargo run --locked -p srs-protocol --example roundtrip_fixtures -- crates/srs-protocol/tests/fixtures "$RUNNER_TEMP/rust-wire"
+          python scripts/reference_fixtures.py --reference "$srs_reference" --verify-dir "$RUNNER_TEMP/rust-wire"
