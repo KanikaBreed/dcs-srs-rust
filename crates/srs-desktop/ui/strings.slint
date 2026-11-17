@@ -56,6 +56,13 @@ export global Strings {
     out property<string> profile-name: @tr("profiles.name" => "Name (required)");
     out property<string> server-name: @tr("profiles.server-name" => "Saved server name");
     out property<string> preset-name: @tr("profiles.preset-name" => "Radio preset name");
+    out property<string> volume: @tr("monitor.volume" => "Receive volume");
+    out property<string> mute: @tr("monitor.mute" => "Mute receive");
+    out property<string> monitor-help: @tr("monitor.help" => "Receive only • Volume and mute do not disable transmit");
+    public pure function receive-volume(percent: int) -> string { @tr("monitor.percent" => "Receive volume: {0}%", percent) }
+    public pure function monitor-state(percent: int, muted: bool, rx: bool) -> string {
+        (rx ? @tr("monitor.rx" => "RX • ") : "") + (muted ? @tr("monitor.muted" => "MUTED") : root.receive-volume(percent))
+    }
     out property<string> radio-name: @tr("radio.name" => "Radio name");
     out property<string> apply-name: @tr("radio.apply-name" => "Apply name");
     out property<string> save: @tr("profiles.save" => "Save / replace");

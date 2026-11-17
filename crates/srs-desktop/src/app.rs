@@ -13,6 +13,7 @@ use slint::winit_030::{
     },
 };
 use slint::{ComponentHandle, ModelRc, SharedString, Timer, TimerMode, VecModel};
+use srs_client::receive::{DEFAULT_MONITOR, Monitor, RadioLevel};
 use srs_client::{
     RADIO_COUNT, Radio,
     commands::{RadioChange, RadioEdit},
@@ -35,20 +36,31 @@ struct App {
     outputs: Vec<DeviceInfo>,
     pending: Option<u64>,
     pending_selection: Option<usize>,
+    pending_monitor: Option<Monitor>,
+    monitor: Monitor,
     storage: Option<Worker>,
     storage_busy: bool,
     profiles: Data,
     next_edit: u64,
     stopping: bool,
     last_problem: Problem,
-    last_mixed: u64,
-    rx_until: Instant,
+    last_received: [u64; RADIO_COUNT],
+    rx_until: [Instant; RADIO_COUNT],
+    rx_active: [bool; RADIO_COUNT],
 }
-fn rows(radios: &[Radio; RADIO_COUNT]) -> ModelRc<RadioRow> {
+fn rows(
+    radios: &[Radio; RADIO_COUNT],
+    monitor: &Monitor,
+    rx: &[bool; RADIO_COUNT],
+) -> ModelRc<RadioRow> {
     Rc::new(VecModel::from(
         radios[1..]
             .iter()
-            .map(|radio| RadioRow {
+            .enumerate()
+            .map(|(index, radio)| RadioRow {
+                volume: monitor[index + 1].percent() as i32,
+                muted: monitor[index + 1].muted(),
+                rx: rx[index + 1],
                 name: radio.name.as_str().into(),
                 frequency: format!("{:.6}", radio.frequency_hz / 1e6).into(),
                 guard: if radio.guard_hz > 10_000.0 {
@@ -120,6 +132,32 @@ fn names(values: impl Iterator<Item = String>) -> ModelRc<SharedString> {
     .into()
 }
 impl App {
+    fn refresh_rows(&self, ui: &MainWindow) {
+        ui.set_radios(rows(&self.radios, &self.monitor, &self.rx_active));
+    }
+    fn edit_monitor(&mut self, ui: &MainWindow, volume: i32, muted: bool) {
+        self.invalidate(ui);
+        if self.pending.is_some() || (self.handle.is_some() && !ui.get_ready()) {
+            return;
+        }
+        let Some(level) = u8::try_from(volume)
+            .ok()
+            .and_then(|v| RadioLevel::new(v, muted))
+        else {
+            return;
+        };
+        let Some(radio) = self.monitor.get_mut(ui.get_selected() as usize) else {
+            return;
+        };
+        *radio = level;
+        if let Some(handle) = &self.handle {
+            handle.monitor.send_replace(self.monitor);
+        }
+        self.refresh_rows(ui);
+        ui.set_volume(volume as f32);
+        ui.set_muted(muted);
+    }
+
     fn publish(&self, ui: &MainWindow) {
         if let Some(handle) = &self.handle {
             handle
@@ -160,6 +198,9 @@ impl App {
                     .into(),
             );
             ui.set_radio_name(radio.name.as_str().into());
+            let level = self.monitor[ui.get_selected() as usize];
+            ui.set_volume(level.percent() as f32);
+            ui.set_muted(level.muted());
             ui.set_modulation(i32::from(radio.modulation == Modulation::FM));
         }
     }
@@ -172,6 +213,7 @@ impl App {
         ui.set_password("".into());
         let result = self.config(ui, password).and_then(|mut config| {
             config.radios = self.radios.clone();
+            config.monitor = self.monitor;
             Handle::start(
                 config,
                 self.ptt.intent(ui.get_selected() as usize, Instant::now()),
@@ -183,8 +225,10 @@ impl App {
                 self.stopping = false;
                 self.pending = None;
                 self.last_problem = Problem::None;
-                self.last_mixed = 0;
-                ui.set_radios(rows(&self.radios));
+                self.last_received = [0; RADIO_COUNT];
+                self.rx_until = [Instant::now(); RADIO_COUNT];
+                self.rx_active = [false; RADIO_COUNT];
+                self.refresh_rows(ui);
                 ui.set_problem(0);
                 ui.set_busy(true);
                 ui.set_phase(1);
@@ -254,7 +298,7 @@ impl App {
         } else {
             change.map(RadioEdit::from)
         };
-        let result = change.and_then(|change| self.apply_edit(ui, change, None));
+        let result = change.and_then(|change| self.apply_edit(ui, change, None, None));
         ui.set_problem(result.err().unwrap_or(Problem::None) as i32);
     }
     fn apply_edit(
@@ -262,6 +306,7 @@ impl App {
         ui: &MainWindow,
         change: RadioEdit,
         selected: Option<usize>,
+        monitor: Option<Monitor>,
     ) -> Result<(), Problem> {
         self.invalidate(ui);
         if self.pending.is_some() || self.stopping && self.handle.is_some() {
@@ -278,10 +323,12 @@ impl App {
                     id: self.next_edit,
                     at: Instant::now(),
                     change,
+                    monitor,
                 })
                 .map_err(|_| Problem::Backlog)?;
             self.pending = Some(self.next_edit);
             self.pending_selection = selected;
+            self.pending_monitor = monitor;
             ui.set_editing(true);
         } else {
             let radios = change.apply_to(&self.radios).map_err(|_| Problem::Radio)?;
@@ -289,12 +336,16 @@ impl App {
                 "validation",
                 selected.unwrap_or(ui.get_selected() as usize),
                 &radios,
+                &monitor.unwrap_or(self.monitor),
             )?;
             self.radios = radios;
+            if let Some(monitor) = monitor {
+                self.monitor = monitor;
+            }
             if let Some(selected) = selected {
                 ui.set_selected(selected as i32);
             }
-            ui.set_radios(rows(&self.radios));
+            self.refresh_rows(ui);
             self.editor(ui);
         }
         Ok(())
@@ -366,6 +417,7 @@ impl App {
                 &ui.get_preset_name(),
                 ui.get_selected() as usize,
                 &self.radios,
+                &self.monitor,
             )?)?,
             4 => {
                 let preset = data.presets.get(preset_index?).ok_or(Problem::Profile)?;
@@ -373,6 +425,7 @@ impl App {
                     ui,
                     RadioEdit::Replace(Box::new(preset.radios())),
                     Some(preset.selected),
+                    Some(preset.monitor()?),
                 )?;
                 ui.set_preset_name(preset.name.as_str().into());
                 return Ok(());
@@ -442,6 +495,13 @@ impl App {
         let acknowledged = self.pending.is_some_and(|id| id == snapshot.completed_edit);
         if acknowledged {
             self.pending = None;
+            if let Some(monitor) = self.pending_monitor.take()
+                && snapshot.problem == Problem::None
+            {
+                self.monitor = monitor;
+                self.refresh_rows(ui);
+                self.editor(ui);
+            }
             if let Some(selected) = self.pending_selection.take()
                 && snapshot.problem == Problem::None
             {
@@ -454,18 +514,25 @@ impl App {
         if self.radios != snapshot.radios {
             self.invalidate(ui);
             self.radios = snapshot.radios;
-            ui.set_radios(rows(&self.radios));
+            self.refresh_rows(ui);
             self.editor(ui);
         }
         if snapshot.problem != self.last_problem {
             self.last_problem = snapshot.problem;
             ui.set_problem(snapshot.problem as i32);
         }
-        if snapshot.status.mixed_frames > self.last_mixed {
-            self.rx_until = now + Duration::from_millis(200);
+        for (slot, until) in self.rx_until.iter_mut().enumerate() {
+            if snapshot.status.received_frames[slot] > self.last_received[slot] {
+                *until = now + Duration::from_millis(200);
+            }
         }
-        self.last_mixed = snapshot.status.mixed_frames;
-        ui.set_rx_active(ready && self.rx_until > now);
+        self.last_received = snapshot.status.received_frames;
+        let active = std::array::from_fn(|slot| ready && self.rx_until[slot] > now);
+        if active != self.rx_active {
+            self.rx_active = active;
+            self.refresh_rows(ui);
+        }
+        ui.set_rx_active(active.iter().any(|rx| *rx));
         ui.set_ready(ready);
         ui.set_editing(self.pending.is_some() || snapshot.editing);
         ui.set_armed(self.ptt.armed());
@@ -528,7 +595,7 @@ fn setup(profile_path: Option<std::path::PathBuf>) -> Result<Application, slint:
     ui.set_inputs(device_model(&inputs, default_label.clone()));
     ui.set_outputs(device_model(&outputs, default_label));
     let radios = disabled_radios();
-    ui.set_radios(rows(&radios));
+    ui.set_radios(rows(&radios, &DEFAULT_MONITOR, &[false; RADIO_COUNT]));
     let storage = Worker::start(profile_path).ok();
     ui.set_storage_busy(storage.is_some());
     ui.set_storage_status(if storage.is_some() { 1 } else { 2 });
@@ -540,14 +607,17 @@ fn setup(profile_path: Option<std::path::PathBuf>) -> Result<Application, slint:
         outputs,
         pending: None,
         pending_selection: None,
+        pending_monitor: None,
+        monitor: DEFAULT_MONITOR,
         storage_busy: storage.is_some(),
         storage,
         profiles: Data::default(),
         next_edit: 0,
         stopping: false,
         last_problem: Problem::None,
-        last_mixed: 0,
-        rx_until: Instant::now(),
+        last_received: [0; RADIO_COUNT],
+        rx_until: [Instant::now(); RADIO_COUNT],
+        rx_active: [false; RADIO_COUNT],
     }));
     // Weak UI references prevent callback cycles. try_borrow_mut handles Slint's
     // nested pointer cancellation when a state update disables the PTT pad;
@@ -572,6 +642,9 @@ fn setup(profile_path: Option<std::path::PathBuf>) -> Result<Application, slint:
             window.set_selected(slot);
             state.editor(&window);
         }
+    });
+    callback!(on_edit_monitor, |state, window, volume, muted| {
+        state.edit_monitor(&window, volume, muted);
     });
     callback!(on_edit_radio, |state, window, kind| {
         state.edit(&window, kind);
@@ -660,6 +733,7 @@ fn setup(profile_path: Option<std::path::PathBuf>) -> Result<Application, slint:
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
+    use slint::Model;
     struct Peer(Option<std::thread::JoinHandle<()>>);
     impl Drop for Peer {
         fn drop(&mut self) {
@@ -749,6 +823,7 @@ mod tests {
         let mut saw_long_tx = false;
         let mut peer: Option<Peer> = None;
         let mut saw_rx = false;
+        let mut saw_radio_rx = false;
         let driver = Timer::default();
         driver.start(TimerMode::Repeated, Duration::from_millis(50), move || {
             let ui = weak.upgrade().unwrap();
@@ -768,6 +843,9 @@ mod tests {
             let mut step = step.borrow_mut();
             if *step == 9 && ui.get_phase() == 3 {
                 saw_long_tx = true;
+            }
+            if ui.get_radios().row_data(0).is_some_and(|row| row.rx) {
+                saw_radio_rx = true;
             }
             if ui.get_rx_active() {
                 saw_rx = true;
@@ -808,6 +886,8 @@ mod tests {
                         "generated stock-server audio must reach native playout"
                     );
                     assert!(saw_rx, "received audio must appear in the UI");
+                    assert!(saw_radio_rx, "chosen receive radio must show RX");
+                    assert_eq!(state.borrow().last_received[2], 0);
                     ui.invoke_pointer_input(1);
                     ui.invoke_pointer_input(0);
                     assert!(
@@ -914,6 +994,7 @@ mod tests {
                     ui.invoke_edit_radio(1);
                     ui.set_key("7".into());
                     ui.invoke_edit_radio(2);
+                    ui.invoke_edit_monitor(35, true);
                     ui.set_preset_name("TOC training".into());
                     ui.invoke_profile_action(3);
                     *step = 14;
@@ -921,6 +1002,7 @@ mod tests {
                 14 if !ui.get_storage_busy() => {
                     assert_eq!(ui.get_storage_status(), 0);
                     ui.invoke_edit_radio(3);
+                    ui.invoke_edit_monitor(100, false);
                     ui.invoke_profile_action(6);
                     *step = 15;
                 }
@@ -933,6 +1015,12 @@ mod tests {
                     assert_eq!(state.borrow().radios[2].guard_hz, 243e6);
                     assert_eq!(state.borrow().radios[2].encryption_key, Some(7));
                     assert!(!ui.get_busy());
+                    assert_eq!(ui.get_volume(), 35.);
+                    assert!(ui.get_muted());
+                    assert_eq!(
+                        state.borrow().monitor[2],
+                        RadioLevel::new(35, true).unwrap()
+                    );
                     ui.set_password("fixture-blue".into());
                     ui.invoke_connect_requested();
                     *step = 16;
@@ -943,6 +1031,9 @@ mod tests {
                         30.5e6,
                         "offline preset lost during handshake"
                     );
+                    assert_eq!(ui.get_volume(), 35.);
+                    assert!(ui.get_muted());
+                    ui.invoke_edit_monitor(80, false);
                     ui.set_frequency("31.5".into());
                     ui.invoke_edit_radio(0);
                     *step = 17;
@@ -959,6 +1050,8 @@ mod tests {
                 }
                 19 if !ui.get_editing() && ui.get_phase() == 2 => {
                     assert_eq!(state.borrow().radios[2].frequency_hz, 30.5e6);
+                    assert_eq!(ui.get_volume(), 35.);
+                    assert!(ui.get_muted());
                     ui.invoke_disconnect_requested();
                     *step = 20;
                 }

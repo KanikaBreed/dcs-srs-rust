@@ -2,6 +2,7 @@
 //! One joinable thread per explicitly started session. No UI or audio callback
 //! executes network/codec work. Passwords are never formatted or persisted.
 use crate::input::{Intent, Lease, Update};
+use srs_client::receive::{DEFAULT_MONITOR, Monitor};
 use srs_client::{
     Identity, Options, RADIO_COUNT, Radio, Session, commands::RadioEdit, disabled_radios,
 };
@@ -41,6 +42,7 @@ pub struct Config {
     pub input: String,
     pub output: String,
     pub radios: [Radio; RADIO_COUNT],
+    pub monitor: Monitor,
 }
 impl Config {
     pub fn parse(
@@ -68,6 +70,7 @@ impl Config {
             input,
             output,
             radios: disabled_radios(),
+            monitor: DEFAULT_MONITOR,
         })
     }
 }
@@ -118,11 +121,13 @@ pub struct Edit {
     pub id: u64,
     pub at: Instant,
     pub change: RadioEdit,
+    pub monitor: Option<Monitor>,
 }
 pub struct Handle {
     stop: watch::Sender<bool>,
     pub input: watch::Sender<Intent>,
     pub edits: mpsc::Sender<Edit>,
+    pub monitor: watch::Sender<Monitor>,
     pub view: watch::Receiver<Snapshot>,
     thread: Option<JoinHandle<()>>,
 }
@@ -130,6 +135,7 @@ impl Handle {
     pub fn start(config: Config, initial: Intent) -> Result<Self, Problem> {
         let (stop, stopped) = watch::channel(false);
         let (input, inputs) = watch::channel(initial);
+        let (monitor, levels) = watch::channel(config.monitor);
         let (edits, requests) = mpsc::channel(1);
         let (view, receiver) = watch::channel(Snapshot {
             radios: config.radios.clone(),
@@ -146,7 +152,7 @@ impl Handle {
                         tokio::select! {
                             biased;
                             _ = cancelled(stopped) => Ok(()),
-                            result = connected(config, inputs, requests, &view) => result,
+                            result = connected(config, inputs, requests, levels, &view) => result,
                         }
                     }),
                     Err(_) => Err(Problem::Runtime),
@@ -163,6 +169,7 @@ impl Handle {
             stop,
             input,
             edits,
+            monitor,
             view: receiver,
             thread: Some(thread),
         })
@@ -193,6 +200,7 @@ async fn connected(
     mut config: Config,
     mut inputs: watch::Receiver<Intent>,
     mut edits: mpsc::Receiver<Edit>,
+    mut monitor: watch::Receiver<Monitor>,
     view: &watch::Sender<Snapshot>,
 ) -> Result<(), Problem> {
     let mut session = Session::connect(
@@ -215,6 +223,7 @@ async fn connected(
     capture.start().map_err(|_| Problem::Device)?;
     playback.start().map_err(|_| Problem::Device)?;
     let (mut controller, events) = srs_toc::controls();
+    controller.set_monitor(config.monitor);
     let (status_tx, status) = srs_toc::status_channel();
     let (radios_tx, radios) = watch::channel(session.radios().clone());
     let run = srs_toc::run_observed(
@@ -231,6 +240,9 @@ async fn connected(
         let mut ticker = tokio::time::interval(Duration::from_millis(25));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
+            if monitor.has_changed().unwrap_or(false) {
+                controller.set_monitor(*monitor.borrow_and_update());
+            }
             let current = *status.borrow();
             let ready = matches!(current.phase, Phase::Receiving | Phase::Transmitting);
             let intent = *inputs.borrow_and_update();
@@ -263,6 +275,7 @@ async fn connected(
             tokio::select! {
                 biased;
                 changed = inputs.changed() => { if changed.is_err() { return Ok(()); } },
+                _ = monitor.changed() => { controller.set_monitor(*monitor.borrow_and_update()); },
                 edit = edits.recv() => {
                     let Some(edit) = edit else { return Ok(()); };
                     let _ = controller.release();
@@ -274,6 +287,12 @@ async fn connected(
                     }
                     view.send_modify(|s| { s.editing = true; s.problem = Problem::None; });
                     let result = controller.edit_radios(edit.change).await;
+                    if result.is_ok() && let Some(levels) = edit.monitor {
+                        // Consume the old GUI target; the acknowledged preset is
+                        // authoritative until a subsequent intentional level edit.
+                        monitor.borrow_and_update();
+                        controller.set_monitor(levels);
+                    }
                     // Any action held while an edit was in flight is consumed.
                     lease.update(*inputs.borrow_and_update(), false, Instant::now());
                     view.send_modify(|s| {

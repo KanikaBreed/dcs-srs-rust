@@ -26,7 +26,15 @@ The independent C# harness now emits 46 matcher cases in [radio-matching.json](.
 
 One intentional correction is pinned by a regression case: upstream's fallback guard can inherit an earlier blocked primary radio's `decryptable = true`, even though the guard's key is wrong. Rust recomputes the flag for that guard. The fixture records the original C# result and the test explicitly asserts this single difference.
 
-Initial TOC output chooses the first clear eligible packet frequency and the upstream radio search order. It emits one copy per original speaker/sequence. Selected-radio and volume scoring, multi-radio interference, static, recording, effects, retransmission, and per-radio mixing controls remain pending. Server settings for those effects are retained but their DSP is not implemented.
+Initial TOC output chooses the first clear eligible packet frequency and the upstream radio search order. It emits one copy per original speaker/sequence. Selected-radio and volume scoring, multi-radio interference, static, recording, effects and retransmission remain pending. Local receive volume and mute apply to the already chosen radio and do not change selection order. Server settings for those effects are retained but their DSP is not implemented.
+
+## Local monitor controls
+
+`VoiceConnection::set_monitor` sets eleven bounded `RadioLevel` values (0–100%, plus independent mute). The default is full volume and unmuted. Both `poll_audio` and `poll_mix` apply the latest levels at playout; queued encoded audio therefore uses the current level. Decoding and deduplication continue while muted. No control/voice wire fields, tuning, authorization revision or PTT state change. Callers must flush their downstream output queue when updating levels; `srs-toc` does so before the next mix.
+
+The fixed mono mixer scales samples by each frame's matched radio, sums up to 16 sources in i32 and saturates once to i16. Maximum weighted accumulation is within i32 bounds. `Mix` reports decoded/concealed speaker count, nonzero-gain speaker count, clipping and a bitmask of radios receiving actual decoded frames. PLC does not count as new RX. `srs-toc::Status::received_frames` counts mix ticks containing decoded voice on each radio (once per radio per tick, regardless of speaker count), so a slower UI poll need not catch a single mix tick; fully muted mixes are consumed without queuing output.
+
+This is new worker code. Upstream `Common/Audio/Utility/VolumeConversionHelper.cs`, `Common/Audio/Providers/RadioMixingProvider.cs` and desktop `UDPClientAudioProcessor.cs` were inspected at the same pinned revision. Its positive 0–1 radio slider produces linear gain; this preview deliberately uses exact zero at 0% or mute, with no boost. The upstream selected/decryptable/nonzero-volume priority sorter is not implemented. With duplicate matching radios, only the existing chosen radio gets audio/RX. Effects, per-radio stereo routing and smooth gain ramps remain pending; manual gain steps can click and still require listening checks.
 
 ## Timing, limits, and overflow policy
 

@@ -4,6 +4,7 @@
 //! nonblocking sidecar lock and reject changes made by another application.
 use crate::session::{Config, Problem};
 use serde::{Deserialize, Serialize};
+use srs_client::receive::{DEFAULT_MONITOR, Monitor, RadioLevel};
 use srs_client::{RADIO_COUNT, Radio, disabled_radios};
 use srs_protocol::voice::Modulation;
 use std::{
@@ -40,6 +41,8 @@ struct PresetRadio {
     guard_hz: f64,
     mode: Mode,
     key: Option<u8>,
+    volume: u8,
+    muted: bool,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -58,7 +61,7 @@ pub struct Data {
 impl Default for Data {
     fn default() -> Self {
         Self {
-            version: 1,
+            version: 2,
             servers: vec![],
             presets: vec![],
         }
@@ -101,6 +104,7 @@ impl Preset {
         name: &str,
         selected: usize,
         radios: &[Radio; RADIO_COUNT],
+        monitor: &Monitor,
     ) -> Result<Self, Problem> {
         let preset = Self {
             name: name.trim().into(),
@@ -119,6 +123,8 @@ impl Preset {
                         Mode::Off
                     },
                     key: r.encryption_key,
+                    volume: monitor[index + 1].percent(),
+                    muted: monitor[index + 1].muted(),
                 }
             }),
         };
@@ -146,7 +152,15 @@ impl Preset {
                         || (10_001.0..=10e9).contains(&r.frequency_hz))
                     && (r.guard_hz == 1.0 || (10_001.0..=10e9).contains(&r.guard_hz))
                     && r.key != Some(0)
+                    && r.volume <= 100
             })
+    }
+    pub fn monitor(&self) -> Result<Monitor, Problem> {
+        let mut monitor = DEFAULT_MONITOR;
+        for (out, radio) in monitor[1..].iter_mut().zip(&self.radios) {
+            *out = RadioLevel::new(radio.volume, radio.muted).ok_or(Problem::Profile)?;
+        }
+        Ok(monitor)
     }
     pub fn radios(&self) -> [Radio; RADIO_COUNT] {
         let mut radios = disabled_radios();
@@ -173,7 +187,7 @@ impl Data {
             let mut seen = std::collections::HashSet::new();
             names.into_iter().all(|name| seen.insert(name))
         }
-        self.version == 1
+        self.version == 2
             && self.servers.len() <= MAX_ENTRIES
             && self.presets.len() <= MAX_ENTRIES
             && self.servers.iter().all(Server::valid)
@@ -226,6 +240,73 @@ fn read(path: &Path) -> Result<Option<Vec<u8>>, StoreError> {
         Err(_) => Err(StoreError::Io),
     }
 }
+// Keep the v1 wire types strict and separate: unknown/duplicate fields must
+// still fail, and future additions to v2 must not silently relax migration.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyRadio {
+    name: String,
+    frequency_hz: f64,
+    guard_hz: f64,
+    mode: Mode,
+    key: Option<u8>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyPreset {
+    name: String,
+    selected: usize,
+    radios: [LegacyRadio; 10],
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyData {
+    version: u32,
+    servers: Vec<Server>,
+    presets: Vec<LegacyPreset>,
+}
+fn decode(bytes: &[u8]) -> Result<Data, StoreError> {
+    #[derive(Deserialize)]
+    struct Header {
+        version: u32,
+    }
+    let header: Header = serde_json::from_slice(bytes).map_err(|_| StoreError::Invalid)?;
+    let data = match header.version {
+        1 => {
+            let old: LegacyData = serde_json::from_slice(bytes).map_err(|_| StoreError::Invalid)?;
+            if old.version != 1 {
+                return Err(StoreError::Invalid);
+            }
+            Data {
+                version: 2,
+                servers: old.servers,
+                presets: old
+                    .presets
+                    .into_iter()
+                    .map(|p| Preset {
+                        name: p.name,
+                        selected: p.selected,
+                        radios: p.radios.map(|r| PresetRadio {
+                            name: r.name,
+                            frequency_hz: r.frequency_hz,
+                            guard_hz: r.guard_hz,
+                            mode: r.mode,
+                            key: r.key,
+                            volume: 100,
+                            muted: false,
+                        }),
+                    })
+                    .collect(),
+            }
+        }
+        2 => serde_json::from_slice(bytes).map_err(|_| StoreError::Invalid)?,
+        _ => return Err(StoreError::Invalid),
+    };
+    if !data.valid() {
+        return Err(StoreError::Invalid);
+    }
+    Ok(data)
+}
 struct Store {
     path: PathBuf,
     expected: Option<Vec<u8>>,
@@ -236,7 +317,7 @@ impl Store {
         self.writable = false;
         let bytes = read(&self.path)?;
         let data: Data = match &bytes {
-            Some(bytes) => serde_json::from_slice(bytes).map_err(|_| StoreError::Invalid)?,
+            Some(bytes) => decode(bytes)?,
             None => Data::default(),
         };
         if !data.valid() {
@@ -391,8 +472,12 @@ mod tests {
             ..Radio::tuned(251e6, Modulation::AM)
         };
         radios[2] = Radio::tuned(30e6, Modulation::FM);
-        data.save_preset(Preset::new("TOC", 2, &radios).ok().unwrap())
-            .unwrap();
+        data.save_preset(
+            Preset::new("TOC", 2, &radios, &DEFAULT_MONITOR)
+                .ok()
+                .unwrap(),
+        )
+        .unwrap();
         data
     }
     #[test]
@@ -432,7 +517,7 @@ mod tests {
         duplicate.servers.push(duplicate.servers[0].clone());
         for bytes in [
             b"{broken".to_vec(),
-            br#"{"version":2,"servers":[],"presets":[]}"#.to_vec(),
+            br#"{"version":3,"servers":[],"presets":[]}"#.to_vec(),
             vec![b' '; MAX_BYTES + 1],
             serde_json::to_vec(&invalid).unwrap(),
             serde_json::to_vec(&duplicate).unwrap(),
@@ -470,21 +555,62 @@ mod tests {
     fn invalid_preset_is_rejected_as_a_whole() {
         let mut radios = example().presets[0].radios();
         radios[10].frequency_hz = f64::NAN;
-        assert!(Preset::new("Bad", 1, &radios).is_err());
-        assert!(Preset::new("", 1, &disabled_radios()).is_err());
-        assert!(Preset::new("Bad", 0, &disabled_radios()).is_err());
+        assert!(Preset::new("Bad", 1, &radios, &DEFAULT_MONITOR).is_err());
+        assert!(Preset::new("", 1, &disabled_radios(), &DEFAULT_MONITOR).is_err());
+        assert!(Preset::new("Bad", 0, &disabled_radios(), &DEFAULT_MONITOR).is_err());
         let mut data = Data::default();
         for index in 0..MAX_ENTRIES {
-            data.save_preset(Preset::new(&index.to_string(), 1, &disabled_radios()).unwrap())
-                .unwrap();
+            data.save_preset(
+                Preset::new(&index.to_string(), 1, &disabled_radios(), &DEFAULT_MONITOR).unwrap(),
+            )
+            .unwrap();
         }
         assert!(
-            data.save_preset(Preset::new("overflow", 1, &disabled_radios()).unwrap())
-                .is_err()
+            data.save_preset(
+                Preset::new("overflow", 1, &disabled_radios(), &DEFAULT_MONITOR).unwrap()
+            )
+            .is_err()
         );
         assert!(
-            data.save_preset(Preset::new("0", 2, &disabled_radios()).unwrap())
+            data.save_preset(Preset::new("0", 2, &disabled_radios(), &DEFAULT_MONITOR).unwrap())
                 .is_ok()
+        );
+    }
+    #[test]
+    fn v1_migrates_in_memory_only_and_receive_levels_roundtrip_in_v2() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("profiles.json");
+        let mut old = serde_json::to_value(example()).unwrap();
+        old["version"] = 1.into();
+        for radio in old["presets"][0]["radios"].as_array_mut().unwrap() {
+            radio.as_object_mut().unwrap().remove("volume");
+            radio.as_object_mut().unwrap().remove("muted");
+        }
+        let bytes = serde_json::to_vec(&old).unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+        let mut s = store(path.clone());
+        let mut data = s.load().unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), bytes, "loading rewrote v1");
+        assert_eq!(data.presets[0].monitor().unwrap(), DEFAULT_MONITOR);
+        let mut levels = DEFAULT_MONITOR;
+        levels[2] = RadioLevel::new(35, true).unwrap();
+        data.save_preset(Preset::new("TOC", 2, &data.presets[0].radios(), &levels).unwrap())
+            .unwrap();
+        s.save(data).unwrap();
+        let data = store(path.clone()).load().unwrap();
+        assert_eq!(data.version, 2);
+        assert_eq!(data.presets[0].monitor().unwrap(), levels);
+        let mut invalid = serde_json::to_value(data).unwrap();
+        invalid["presets"][0]["radios"][1]["volume"] = 101.into();
+        let bytes = serde_json::to_vec(&invalid).unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+        assert_eq!(store(path.clone()).load(), Err(StoreError::Invalid));
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        old["presets"][0]["radios"][0]["muted"] = true.into();
+        assert_eq!(
+            decode(&serde_json::to_vec(&old).unwrap()),
+            Err(StoreError::Invalid),
+            "invalid v1 field was silently migrated"
         );
     }
     #[test]

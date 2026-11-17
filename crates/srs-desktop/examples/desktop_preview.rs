@@ -21,6 +21,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         Rc::new(VecModel::from(
             (0..10)
                 .map(|index| RadioRow {
+                    volume: if index == 1 { 60 } else { 100 },
+                    muted: index == 2,
+                    rx: index == 1 && !tx,
                     name: match index {
                         0 => "Command",
                         1 => "Tower",

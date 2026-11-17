@@ -18,6 +18,36 @@ use tokio::time::Instant;
 pub const MAX_SPEAKERS: usize = 16;
 pub const MAX_GLOBAL_FREQUENCIES: usize = 64;
 const PACKET_MAX_AGE: Duration = Duration::from_millis(120);
+/// Local receive level only; never serialized onto the SRS control/voice wire.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RadioLevel {
+    percent: u8,
+    muted: bool,
+}
+impl RadioLevel {
+    pub const FULL: Self = Self {
+        percent: 100,
+        muted: false,
+    };
+    pub fn new(percent: u8, muted: bool) -> Option<Self> {
+        (percent <= 100).then_some(Self { percent, muted })
+    }
+    pub fn percent(self) -> u8 {
+        self.percent
+    }
+    pub fn muted(self) -> bool {
+        self.muted
+    }
+    fn gain(self) -> i32 {
+        if self.muted {
+            0
+        } else {
+            i32::from(self.percent)
+        }
+    }
+}
+pub type Monitor = [RadioLevel; RADIO_COUNT];
+pub const DEFAULT_MONITOR: Monitor = [RadioLevel::FULL; RADIO_COUNT];
 const EVICT_IDLE_AFTER: Duration = Duration::from_secs(2);
 
 #[derive(Clone)]
@@ -65,7 +95,7 @@ impl Session {
 }
 impl Policy {
     fn route(&self, packet: &ReceivedVoice, blocked: u16) -> Option<Reception> {
-        // Initial TOC has equal gains and no selected receive priority. Use the
+        // TOC keeps the existing receive order independently of local levels. Use the
         // first clear eligible frequency, one copy per original speaker/frame.
         for incoming in &packet.frequencies {
             let global = self.global.contains(&incoming.hz); // desktop uses exact equality
@@ -118,6 +148,9 @@ pub struct Playout {
 pub struct Mix {
     pub speakers: usize,
     pub clipped_samples: usize,
+    pub audible_speakers: usize,
+    /// Radios with decoded network audio this tick, including muted radios; no PLC.
+    pub received_radios: u16,
 }
 struct Stream {
     speaker: ClientId,
@@ -128,6 +161,7 @@ pub(crate) struct ReceiveState {
     origin: Instant,
     stamp: Option<(u64, u16)>,
     streams: Vec<Stream>,
+    monitor: Monitor,
 }
 impl Default for ReceiveState {
     fn default() -> Self {
@@ -135,6 +169,7 @@ impl Default for ReceiveState {
             origin: Instant::now(),
             stamp: None,
             streams: Vec::new(),
+            monitor: DEFAULT_MONITOR,
         }
     }
 }
@@ -145,8 +180,14 @@ impl ReceiveState {
     }
 }
 impl VoiceConnection {
+    /// Change local receive gains without retuning, changing PTT or resetting
+    /// decoders. The caller must flush any downstream output queue at this boundary.
+    pub fn set_monitor(&mut self, monitor: Monitor) {
+        self.receive.monitor = monitor;
+    }
+
     /// Worker-only 40 ms mono mix: at most one due frame per original speaker.
-    /// Equal gain, integer sum and final saturation; no serial speaker backlog.
+    /// Per-radio 0–100% gain, integer sum and final saturation; no speaker backlog.
     /// Call on a 40 ms cadence. Each speaker retains its own decoder and PLC.
     /// This initial mix does not implement upstream radio effects or panning.
     pub fn poll_mix(&mut self, pcm: &mut [i16; OUTPUT_SAMPLES]) -> Result<Mix, VoiceError> {
@@ -157,19 +198,24 @@ impl VoiceConnection {
         let mut decoded = [0; OUTPUT_SAMPLES];
         let mut mix = Mix::default();
         for stream in &mut self.receive.streams {
-            if stream
+            if let Some(frame) = stream
                 .buffer
                 .poll(now, &mut decoded)
                 .map_err(VoiceError::Codec)?
-                .is_some()
             {
                 mix.speakers += 1;
+                let gain = self.receive.monitor[frame.metadata.radio].gain();
+                mix.audible_speakers += usize::from(gain > 0);
+                if frame.kind == FrameKind::Decoded {
+                    mix.received_radios |= 1 << frame.metadata.radio;
+                }
                 for (total, sample) in sum.iter_mut().zip(decoded) {
-                    *total += i32::from(sample);
+                    *total += i32::from(sample) * gain;
                 }
             }
         }
         for (output, total) in pcm.iter_mut().zip(sum) {
+            let total = total / 100;
             let limited = total.clamp(i16::MIN as i32, i16::MAX as i32);
             mix.clipped_samples += usize::from(limited != total);
             *output = limited as i16;
@@ -314,12 +360,18 @@ impl VoiceConnection {
             .buffer
             .poll(now, pcm)
             .map_err(VoiceError::Codec)?
-            .map(|frame| Playout {
-                speaker: stream.speaker,
-                radio: frame.metadata.radio,
-                secondary: frame.metadata.secondary,
-                packet_number: frame.sequence,
-                kind: frame.kind,
+            .map(|frame| {
+                let gain = self.receive.monitor[frame.metadata.radio].gain();
+                for sample in pcm {
+                    *sample = (i32::from(*sample) * gain / 100) as i16;
+                }
+                Playout {
+                    speaker: stream.speaker,
+                    radio: frame.metadata.radio,
+                    secondary: frame.metadata.secondary,
+                    packet_number: frame.sequence,
+                    kind: frame.kind,
+                }
             }))
     }
 }

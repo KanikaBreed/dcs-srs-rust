@@ -20,6 +20,8 @@ Source revision: `d01f540ce5e363e9ac841775c8f7e2253138cd81`. Relevant source fil
 
 `crates/srs-toc` and the initial mono mixer are new orchestration code. Upstream desktop `AudioManager.cs` and `UDPClientAudioProcessor.cs` at the pinned revision were inspected for PTT/capture/stop and speaker-mix boundaries. Their input-release delays, mixer/effects implementation and desktop UI are not copied. Foreground held-key policy and live local radio commands are new code. Upstream `Common/Network/Client/TCPClientHandler.cs` and desktop `UDPClientAudioProcessor.cs` were inspected at the same revision; this console deliberately uses immediate release and a finite hold cap instead of configurable upstream release delays.
 
+Per-radio receive volume/mute, RX telemetry and preset-v2 migration are new code. Upstream `Common/Audio/Utility/VolumeConversionHelper.cs`, `Common/Audio/Providers/RadioMixingProvider.cs` and desktop `UDPClientAudioProcessor.cs` at the pinned revision were inspected for local gain/routing behavior. Their effects, stereo mixer and receive-priority sorter are not copied. The intentional exact-zero mute and existing first-match receive order are described in `docs/RECEIVE.md`.
+
 For future source-derived additions, retain original copyright/license notices and record exact files/revisions and modifications here and near the code. Review separately licensed assets before copying them.
 
 ## Aurora workflow adaptation

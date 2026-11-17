@@ -500,3 +500,113 @@ async fn mono_mix_sums_due_speakers_once_saturates_and_revokes_backlog() {
     assert_eq!(voice.poll_mix(&mut output).unwrap().speakers, 0);
     assert!(output.iter().all(|x| *x == 0));
 }
+
+#[tokio::test(start_paused = true)]
+async fn receive_levels_scale_each_radio_and_mute_keeps_decoders_and_rx_current() {
+    use crate::receive::{DEFAULT_MONITOR, RadioLevel};
+    let (mut voice, _server, _, auth, _live) = registered().await;
+    update_policy(&auth, |p| {
+        p.radios[2] = p.radios[1];
+        p.radios[2].frequency_hz = 252e6;
+    });
+    let mut levels = DEFAULT_MONITOR;
+    assert_eq!(RadioLevel::new(101, false), None);
+    levels[1] = RadioLevel::new(50, false).unwrap();
+    levels[2] = RadioLevel::new(25, false).unwrap();
+    voice.set_monitor(levels);
+    voice.press_ptt(1).unwrap();
+    let mut decoder = srs_audio::Decoder::new().unwrap();
+    let mut expected = [0; srs_audio::OUTPUT_SAMPLES];
+    let mut output = [0; srs_audio::OUTPUT_SAMPLES];
+    for sequence in 1..=3 {
+        for (speaker, hz) in [(b'B', 251e6), (b'C', 252e6)] {
+            let mut packet = audio_packet(&voice, sequence);
+            packet.original_client_id = ClientId::from_bytes(&[speaker; 22]).unwrap();
+            packet.frequencies[0].hz = hz;
+            assert_eq!(
+                voice.buffer_voice(&packet).unwrap(),
+                crate::receive::QueueOutcome::Queued
+            );
+            assert_eq!(
+                voice.buffer_voice(&packet).unwrap(),
+                crate::receive::QueueOutcome::Duplicate
+            );
+            if speaker == b'B' {
+                decoder.decode(&packet.audio, &mut expected).unwrap();
+            }
+        }
+        if sequence == 2 {
+            levels[1] = RadioLevel::new(50, true).unwrap();
+            levels[2] = RadioLevel::new(25, true).unwrap();
+            voice.set_monitor(levels); // Applies to frames that are already queued.
+        } else if sequence == 3 {
+            levels[1] = RadioLevel::FULL;
+            levels[2] = RadioLevel::new(0, false).unwrap();
+            voice.set_monitor(levels);
+        }
+        tokio::time::advance(Duration::from_millis(if sequence == 1 { 80 } else { 40 })).await;
+        let mix = voice.poll_mix(&mut output).unwrap();
+        assert_eq!(
+            mix.speakers, 2,
+            "one decode per original speaker despite relays"
+        );
+        assert_eq!(mix.received_radios, (1 << 1) | (1 << 2));
+        assert_eq!(
+            mix.audible_speakers,
+            match sequence {
+                1 => 2,
+                2 => 0,
+                _ => 1,
+            }
+        );
+        let gain = match sequence {
+            1 => 75,
+            2 => 0,
+            _ => 100,
+        };
+        for (actual, sample) in output.iter().zip(expected) {
+            assert_eq!(*actual, (i32::from(sample) * gain / 100) as i16);
+        }
+        assert!(
+            voice.is_transmitting(),
+            "local receive controls must not alter TX authorization"
+        );
+    }
+    tokio::time::advance(Duration::from_millis(40)).await;
+    assert_eq!(
+        voice.poll_mix(&mut output).unwrap().received_radios,
+        0,
+        "PLC must not invent new RX activity"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn single_speaker_playout_applies_local_gain_and_keeps_muted_metadata() {
+    use crate::receive::{DEFAULT_MONITOR, RadioLevel};
+    let (mut voice, _server, _, _auth, _live) = registered().await;
+    let mut levels = DEFAULT_MONITOR;
+    levels[1] = RadioLevel::new(25, false).unwrap();
+    voice.set_monitor(levels);
+    let packet = audio_packet(&voice, 1);
+    let mut expected = [0; srs_audio::OUTPUT_SAMPLES];
+    srs_audio::Decoder::new()
+        .unwrap()
+        .decode(&packet.audio, &mut expected)
+        .unwrap();
+    voice.buffer_voice(&packet).unwrap();
+    tokio::time::advance(Duration::from_millis(80)).await;
+    let mut pcm = [0; srs_audio::OUTPUT_SAMPLES];
+    assert_eq!(voice.poll_audio(&mut pcm).unwrap().unwrap().radio, 1);
+    for (actual, sample) in pcm.iter().zip(expected) {
+        assert_eq!(*actual, (i32::from(sample) / 4) as i16);
+    }
+    voice.buffer_voice(&audio_packet(&voice, 2)).unwrap();
+    levels[1] = RadioLevel::new(25, true).unwrap();
+    voice.set_monitor(levels);
+    tokio::time::advance(Duration::from_millis(40)).await;
+    let frame = voice.poll_audio(&mut pcm).unwrap().unwrap();
+    assert_eq!(frame.radio, 1);
+    assert_eq!(frame.packet_number, 2);
+    assert_eq!(frame.kind, srs_audio::jitter::FrameKind::Decoded);
+    assert!(pcm.iter().all(|sample| *sample == 0));
+}
