@@ -30,7 +30,7 @@ def verified_binary(path):
         raise SystemExit("Stock server SHA-256 differs from the pinned official release")
 
 
-def measured_probe(command):
+def measured_probe(command, limit=30):
     """Reap this exact Linux child and report its CPU/RSS, excluding the server."""
     process = subprocess.Popen(command, cwd=ROOT)
     began = time.monotonic()
@@ -45,8 +45,8 @@ def measured_probe(command):
                       f"user_cpu={usage.ru_utime:.3f}s system_cpu={usage.ru_stime:.3f}s "
                       f"peak_rss={usage.ru_maxrss}KiB (two synthetic endpoints; no devices)", flush=True)
                 return
-            if time.monotonic() - began > 30:
-                raise subprocess.TimeoutExpired(command, 30)
+            if time.monotonic() - began > limit:
+                raise subprocess.TimeoutExpired(command, limit)
             time.sleep(0.01)
     finally:
         if process.returncode is None:
@@ -60,7 +60,9 @@ def main():
     parser.add_argument("--isolated-from", help=argparse.SUPPRESS)
     parser.add_argument("--desktop-test-binary", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--desktop-only", action="store_true", help="run only the isolated desktop GUI/session check")
+    parser.add_argument("--soak-seconds", type=int, default=0, help="extra same-session two-way loss/jitter probe, 1..3600 seconds")
     args = parser.parse_args()
+    if not 0 <= args.soak_seconds <= 3600: parser.error("soak duration must be 0..3600")
     if sys.platform != "linux":
         raise SystemExit("This stock-server runner requires Linux network namespaces")
     scratch = ROOT / ".scratch"
@@ -99,8 +101,8 @@ def main():
                        str(Path(__file__).resolve()), "--server", str(binary), "--isolated-from", namespace]
         if args.desktop_only:
             command += ["--desktop-only"]
-        command += ["--desktop-test-binary", str(test_binary)]
-        subprocess.run(command, cwd=ROOT, check=True, timeout=120)
+        command += ["--desktop-test-binary", str(test_binary), "--soak-seconds", str(args.soak_seconds)]
+        subprocess.run(command, cwd=ROOT, check=True, timeout=120 + args.soak_seconds)
         return
     if os.readlink("/proc/self/ns/net") == args.isolated_from:
         raise SystemExit("Refusing to start stock server in the parent's network namespace")
@@ -153,6 +155,8 @@ def main():
                         subprocess.run([str(ROOT / "target/debug/examples/voice_probe"), f"127.0.0.1:{port}"],
                                        cwd=ROOT, check=True, timeout=30)
                         measured_probe([str(ROOT / "target/debug/examples/session_audio_probe"), f"127.0.0.1:{port}"])
+                        if args.soak_seconds:
+                            measured_probe([str(ROOT / "target/debug/examples/session_audio_probe"), f"127.0.0.1:{port}", str(args.soak_seconds)], args.soak_seconds + 15)
                         verify_console(f"127.0.0.1:{port}")
                         verify_keyboard(f"127.0.0.1:{port}")
                         verify_desktop(f"127.0.0.1:{port}", args.desktop_test_binary)

@@ -13,6 +13,7 @@ srs-client = { path = "../srs-client" }
 srs-device = { path = "../srs-device" }
 srs-protocol = { path = "../srs-protocol" }
 srs-toc = { path = "../srs-toc" }
+srs-input = { path = "../srs-input" }
 tokio = { version = "1.54.1", features = ["rt", "macros", "sync", "time"] }
 getrandom = "0.4.2"
 serde = { version = "1.0.229", features = ["derive"] }
@@ -31,3 +32,6 @@ srs-audio = { path = "../srs-audio" }
 # Slint-generated component code uses toolkit-managed unsafe internally.
 # Only the generated module allows it; hand-written modules forbid unsafe.
 unsafe_code = "deny"
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+zbus = { version = "5.19.0", default-features = false, features = ["tokio"] }

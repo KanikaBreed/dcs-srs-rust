@@ -40,3 +40,5 @@ impl From<cpal::Error> for Error {
         Self::Backend(error.kind())
     }
 }
+
+pub mod diagnostic;

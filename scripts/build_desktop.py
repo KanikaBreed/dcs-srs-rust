@@ -60,6 +60,7 @@ def main():
     for source in ["LICENSE", "NOTICE.md", "Cargo.lock"]:
         shutil.copy2(ROOT / source, output / Path(source).name)
     shutil.copytree(ROOT / "docs", output / "docs")
+    shutil.copytree(ROOT / "licenses", output / "licenses")
     (output / "README.txt").write_text(
         f"Local validation build. Launch {executable.name} from this directory.\n"
         "See docs/DESKTOP_VALIDATION.md and manifest.json before hardware testing.\n"

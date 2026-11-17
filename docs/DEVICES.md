@@ -76,3 +76,5 @@ A02 remains incomplete until physical checks and integrated SRS/PTT behavior are
 References: [CPAL 0.18.2](https://docs.rs/cpal/0.18.2/cpal/), [CPAL stream construction/timeout contract](https://docs.rs/cpal/0.18.2/cpal/traits/trait.DeviceTrait.html), [rtrb 0.4.1](https://docs.rs/rtrb/0.4.1/rtrb/), and [allocation-counter](https://docs.rs/allocation-counter/0.8.1/allocation_counter/).
 
 Stereo bridge check (local debug build, simulated 400 seconds, no devices): 10,000 codec frames / 40,000 capture blocks, zero queue drops, three expected startup underrun callbacks, maximum capture frame age 30 ms. Measured 6.569 s wall, 6.536 s user CPU, 0.001 s system CPU and 14,952 KiB peak process RSS with `bridge_probe`. This is a single-voice synthetic throughput sample, not real-time hardware latency or a mobile power measurement.
+
+The graphical client now exposes finite offline level/codec-loopback/stereo diagnostics; ownership, cancellation, deadline and evidence limits are in [VOICE_VALIDATION.md](VOICE_VALIDATION.md). Native null checks establish callback/teardown behavior only; physical headset and stock-client listening remain pending.

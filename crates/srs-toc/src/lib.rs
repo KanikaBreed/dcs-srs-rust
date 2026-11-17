@@ -31,6 +31,7 @@ pub enum Error {
     ControlBacklog,
     InvalidInput,
     InputExpired,
+    Interrupted,
 }
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -39,6 +40,7 @@ impl fmt::Display for Error {
             Self::Voice(e) => e.fmt(f),
             Self::Device(e) => e.fmt(f),
             Self::Codec(e) => e.fmt(f),
+            Self::Interrupted => f.write_str("audio worker interrupted; reconnect explicitly"),
             Self::ControlBacklog => f.write_str("TOC control event backlog exceeded"),
             Self::InvalidInput => f.write_str("invalid TOC input action"),
             Self::InputExpired => {
@@ -145,7 +147,16 @@ impl Worker<'_> {
             .as_mut()
             .ok_or(VoiceError::NotReady)?
             .set_monitor(levels);
+        let mut wall = std::time::SystemTime::now();
         loop {
+            let current_wall = std::time::SystemTime::now();
+            if !current_wall
+                .duration_since(wall)
+                .is_ok_and(|gap| gap < INPUT_LEASE)
+            {
+                return Err(Error::Interrupted);
+            }
+            wall = current_wall;
             if inputs.has_changed().is_err() {
                 return Ok(self.stats);
             }
@@ -317,6 +328,16 @@ async fn send_current(
 ) -> Result<bool, Error> {
     let future = voice.send_frame(encoded);
     tokio::pin!(future);
+    let began = std::time::SystemTime::now();
+    // Recheck wall age before polling a pending socket send after suspension,
+    // including platforms whose monotonic clock does not advance during sleep.
+    let guarded = std::future::poll_fn(|cx| {
+        if !began.elapsed().is_ok_and(|age| age < CAPTURE_MAX_AGE) {
+            return std::task::Poll::Ready(Err(VoiceError::SendTimeout));
+        }
+        std::future::Future::poll(future.as_mut(), cx)
+    });
+    tokio::pin!(guarded);
     let mut health = interval(WORKER_TICK);
     health.set_missed_tick_behavior(MissedTickBehavior::Skip);
     loop {
@@ -338,7 +359,7 @@ async fn send_current(
             _ = inputs.changed() => (),
             _ = sleep_until(until.min(frame_expires)) => return Ok(false),
             _ = health.tick() => (),
-            sent = &mut future => match sent {
+            sent = &mut guarded => match sent {
                 Ok(_) => return Ok(true),
                 Err(VoiceError::NotTransmitting | VoiceError::SendTimeout) => return Ok(false),
                 Err(e) => return Err(e.into()),

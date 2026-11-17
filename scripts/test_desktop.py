@@ -69,7 +69,7 @@ def verify_desktop(address, test_binary):
         print("PASS: desktop window/controller authenticated with stock SRS; disabled-radio start, "
               "generated stock-server RX/indicator, native null capture/TX, UI-stall release, stale-input rejection, pointer cancel, "
               "tune/guard/key/off, hold cap, saved server/preset reload, offline preparation, "
-              "hostname reconnect, forced TCP loss/recovery without held TX, menus, server policy, device refresh, PTT rebinding/persistence, live preset release, receive levels/routing, per-radio RX and disconnect/join. No hardware.", flush=True)
+              "hostname reconnect, forced TCP loss/recovery without held TX, menus, server policy, device refresh, PTT rebinding/persistence, live preset release, receive levels/routing, per-radio RX, focused Space/Tab release, offline diagnostic/session exclusion and disconnect/join. No hardware.", flush=True)
 
 
 if __name__ == "__main__":

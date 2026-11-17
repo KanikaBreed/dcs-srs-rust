@@ -1,4 +1,4 @@
-import { Button, LineEdit, ComboBox, ScrollView, Slider, CheckBox } from "std-widgets.slint";
+import { ProgressIndicator, Button, LineEdit, ComboBox, ScrollView, Slider, CheckBox, SpinBox } from "std-widgets.slint";
 import { Strings } from "strings.slint";
 export { Strings }
 export struct PeerRow { name: string, coalition: int }
@@ -61,6 +61,28 @@ export component MainWindow inherits Window {
     in property<int> retry-attempt;
     in property<int> ptt-key: 8;
     in property<bool> controls-saved: true;
+    in-out property<int> background-mode;
+    in-out property<int> background-key: 7;
+    in-out property<bool> background-shift;
+    in-out property<bool> background-ctrl;
+    in-out property<bool> background-alt;
+    in-out property<bool> background-super;
+    in-out property<int> joystick-index: -1;
+    in-out property<int> joystick-button: 1;
+    in property<[string]> joysticks;
+    in property<bool> background-enabled;
+    in property<int> background-state;
+    in property<string> background-trigger;
+    callback background-action(int);
+    in property<bool> diagnostic-active;
+    in property<int> diagnostic-mode;
+    in property<int> diagnostic-state: -1;
+    in property<float> diagnostic-peak;
+    in property<int> diagnostic-seconds;
+    in property<string> diagnostic-clipped: "0";
+    in property<int> diagnostic-channel;
+    in property<bool> diagnostic-mono;
+    callback diagnostic-action(int);
     in property<string> app-version;
     in property<string> server-version;
     in property<int> coalition: -1;
@@ -87,6 +109,9 @@ export component MainWindow inherits Window {
     callback edit-monitor(int, bool);
     callback edit-routing(int);
     callback pointer-input(int);
+    callback focused-input(int);
+    out property<bool> talk-focused: talk-focus.has-focus;
+    public function focus-talk() { talk-focus.focus(); }
     callback profile-action(int);
     callback profile-selected(int);
     VerticalLayout {
@@ -105,85 +130,101 @@ export component MainWindow inherits Window {
             border-radius: 8px; min-height: 46px;
             HorizontalLayout { padding: 12px; spacing: 12px;
                 Text {
-                    text: root.phase == 1 ? (root.retry-attempt > 0 ? Strings.retrying(root.retry-attempt) : Strings.connecting) : root.phase == 2 ? Strings.receiving : root.phase == 3 ? Strings.transmitting : root.phase == 4 ? Strings.stopped : root.phase == 5 ? Strings.stopping : Strings.offline;
+                    text: root.diagnostic-active ? Strings.testing-audio : root.phase == 1 ? (root.retry-attempt > 0 ? Strings.retrying(root.retry-attempt) : Strings.connecting) : root.phase == 2 ? Strings.receiving : root.phase == 3 ? Strings.transmitting : root.phase == 4 ? Strings.stopped : root.phase == 5 ? Strings.stopping : Strings.offline;
                     color: root.phase == 3 ? Theme.tx : Theme.accent; font-weight: 700;
                 }
                 Label { text: Strings.active-radio(root.selected, root.radios[root.selected - 1].enabled ? root.radios[root.selected - 1].frequency : Strings.off); }
+                if root.diagnostic-active: Button { text: Strings.stop-test; clicked => { root.diagnostic-action(0); } }
                 if root.busy: Button { text: Strings.disconnect; max-width: 140px; clicked => { root.disconnect-requested(); } }
                 Text { text: root.rx-active ? Strings.rx : ""; color: Theme.accent; horizontal-alignment: right; }
             }
         }
         if root.page == 1: Rectangle {
-            background: Theme.panel; border-radius: 10px;
-            VerticalLayout {
+            vertical-stretch: 1; background: Theme.panel; border-radius: 10px;
+            ScrollView { VerticalLayout {
                 padding: 16px; spacing: 10px;
                 HorizontalLayout {
                     spacing: 12px;
                     VerticalLayout { spacing: 4px;
                         Label { text: Strings.server; }
-                        LineEdit { text <=> root.server; enabled: !root.busy && !root.device-busy; accessible-label: Strings.server; }
+                        LineEdit { text <=> root.server; enabled: !root.busy && !root.device-busy && !root.diagnostic-active; accessible-label: Strings.server; }
                     }
                     VerticalLayout { spacing: 4px;
                         Label { text: Strings.callsign; }
-                        LineEdit { text <=> root.callsign; enabled: !root.busy && !root.device-busy; accessible-label: Strings.callsign; }
+                        LineEdit { text <=> root.callsign; enabled: !root.busy && !root.device-busy && !root.diagnostic-active; accessible-label: Strings.callsign; }
                     }
                     VerticalLayout { spacing: 4px;
                         Label { text: Strings.password; }
-                        LineEdit { text <=> root.password; input-type: InputType.password; enabled: !root.busy && !root.device-busy; accessible-label: Strings.password; }
+                        LineEdit { text <=> root.password; input-type: InputType.password; enabled: !root.busy && !root.device-busy && !root.diagnostic-active; accessible-label: Strings.password; }
                     }
                 }
                 HorizontalLayout {
                     spacing: 12px;
                     VerticalLayout { spacing: 4px;
                         Label { text: Strings.microphone; }
-                        ComboBox { model: root.inputs; current-index <=> root.input-index; enabled: !root.busy && !root.device-busy; accessible-label: Strings.microphone; }
+                        ComboBox { model: root.inputs; current-index <=> root.input-index; enabled: !root.busy && !root.device-busy && !root.diagnostic-active; accessible-label: Strings.microphone; }
                     }
                     VerticalLayout { spacing: 4px;
                         Label { text: Strings.output; }
-                        ComboBox { model: root.outputs; current-index <=> root.output-index; enabled: !root.busy && !root.device-busy; accessible-label: Strings.output; }
+                        ComboBox { model: root.outputs; current-index <=> root.output-index; enabled: !root.busy && !root.device-busy && !root.diagnostic-active; accessible-label: Strings.output; }
                     }
-                    Button { text: root.busy ? Strings.disconnect : Strings.connect; min-width: 220px; enabled: root.busy || !root.device-busy;
+                    Button { text: root.busy ? Strings.disconnect : Strings.connect; min-width: 220px; enabled: root.busy || (!root.device-busy && !root.diagnostic-active);
                         clicked => { if root.busy { root.disconnect-requested(); } else { root.connect-requested(); } }
                     }
                 }
                 HorizontalLayout { spacing: 12px;
                     Label { text: Strings.address-help; wrap: word-wrap; }
                     Button { text: root.device-busy ? Strings.scanning : Strings.refresh-devices;
-                        enabled: !root.busy && !root.device-busy; clicked => { root.refresh-devices(); }
+                        enabled: !root.busy && !root.device-busy && !root.diagnostic-active; clicked => { root.refresh-devices(); }
                     }
                 }
                 CheckBox { text: Strings.retry-choice; checked <=> root.retry; enabled: !root.busy; }
                 Label { text: Strings.retry-help; wrap: word-wrap; }
+                Text { text: Strings.audio-test; color: Theme.accent; font-weight: 700; }
+                Label { text: Strings.audio-test-help; wrap: word-wrap; }
+                HorizontalLayout { spacing: 8px;
+                    Button { text: Strings.test-microphone; enabled: !root.busy && !root.device-busy && !root.diagnostic-active; clicked => { root.diagnostic-action(1); } }
+                    Button { text: Strings.test-loopback; enabled: !root.busy && !root.device-busy && !root.diagnostic-active; clicked => { root.diagnostic-action(2); } }
+                    Button { text: Strings.test-stereo; enabled: !root.busy && !root.device-busy && !root.diagnostic-active; clicked => { root.diagnostic-action(3); } }
+                    Button { text: Strings.stop-test; enabled: root.diagnostic-active; clicked => { root.diagnostic-action(0); } }
+                }
+                if root.diagnostic-state >= 0: Label { text: Strings.audio-test-state(root.diagnostic-state) + " · " + root.diagnostic-seconds + " / 15 s"; wrap: word-wrap; }
+                if root.diagnostic-active && root.diagnostic-mode != 3: HorizontalLayout { spacing: 8px;
+                    Label { text: Strings.mic-level; }
+                    ProgressIndicator { progress: root.diagnostic-peak / 100; accessible-label: Strings.mic-level; }
+                    Label { text: round(root.diagnostic-peak) + "% · " + Strings.clip-count + " " + root.diagnostic-clipped; }
+                }
+                if root.diagnostic-active && root.diagnostic-mode == 3: Label { text: root.diagnostic-mono ? Strings.test-mono : root.diagnostic-channel == 1 ? Strings.test-left : Strings.test-right; }
                 Label { text: Strings.privacy; wrap: word-wrap; }
-            }
+            } }
         }
         if root.page == 2: Rectangle { background: Theme.panel; border-radius: 8px;
             VerticalLayout { padding: 18px; spacing: 16px;
                 HorizontalLayout { spacing: 12px;
-                    Button { text: Strings.import-presets; enabled: !root.storage-busy && !root.editing; clicked => { root.profile-action(8); } }
-                    Button { text: Strings.export-presets; enabled: !root.storage-busy && root.saved-presets.length > 0; clicked => { root.profile-action(9); } }
+                    Button { text: Strings.import-presets; enabled: !root.diagnostic-active && !root.storage-busy && !root.editing; clicked => { root.profile-action(8); } }
+                    Button { text: Strings.export-presets; enabled: !root.diagnostic-active && !root.storage-busy && root.saved-presets.length > 0; clicked => { root.profile-action(9); } }
                 }
                 Label { text: Strings.transfer-help; wrap: word-wrap; }
                 Text { text: Strings.saved-setups; color: Theme.accent; font-weight: 700; }
                     HorizontalLayout { spacing: 8px;
                         Label { text: Strings.saved-servers; vertical-alignment: center; }
-                        ComboBox { model: root.saved-servers; current-index <=> root.server-index; enabled: !root.busy && !root.device-busy && !root.storage-busy; accessible-label: Strings.saved-servers; selected(value) => { root.profile-selected(0); } }
-                        LineEdit { text <=> root.server-name; placeholder-text: Strings.profile-name; accessible-label: Strings.server-name; enabled: !root.busy && !root.device-busy && !root.storage-busy; }
-                        Button { text: Strings.save; enabled: !root.busy && !root.device-busy && !root.storage-busy; clicked => { root.profile-action(0); } }
-                        Button { text: Strings.load; enabled: !root.busy && !root.device-busy && !root.storage-busy && root.server-index >= 0; clicked => { root.profile-action(1); } }
-                        Button { text: Strings.remove; enabled: !root.busy && !root.device-busy && !root.storage-busy && root.server-index >= 0; clicked => { root.profile-action(2); } }
+                        ComboBox { model: root.saved-servers; current-index <=> root.server-index; enabled: !root.busy && !root.device-busy && !root.diagnostic-active && !root.storage-busy; accessible-label: Strings.saved-servers; selected(value) => { root.profile-selected(0); } }
+                        LineEdit { text <=> root.server-name; placeholder-text: Strings.profile-name; accessible-label: Strings.server-name; enabled: !root.busy && !root.device-busy && !root.diagnostic-active && !root.storage-busy; }
+                        Button { text: Strings.save; enabled: !root.busy && !root.device-busy && !root.diagnostic-active && !root.storage-busy; clicked => { root.profile-action(0); } }
+                        Button { text: Strings.load; enabled: !root.busy && !root.device-busy && !root.diagnostic-active && !root.storage-busy && root.server-index >= 0; clicked => { root.profile-action(1); } }
+                        Button { text: Strings.remove; enabled: !root.busy && !root.device-busy && !root.diagnostic-active && !root.storage-busy && root.server-index >= 0; clicked => { root.profile-action(2); } }
                     }
                     HorizontalLayout { spacing: 8px;
                         Label { text: Strings.presets; vertical-alignment: center; }
-                        ComboBox { model: root.saved-presets; current-index <=> root.preset-index; enabled: !root.storage-busy && !root.editing; accessible-label: Strings.presets; selected(value) => { root.profile-selected(1); } }
-                        LineEdit { text <=> root.preset-name; placeholder-text: Strings.profile-name; accessible-label: Strings.preset-name; enabled: !root.storage-busy && !root.editing; }
-                        Button { text: Strings.save; enabled: !root.storage-busy && root.can-edit; clicked => { root.profile-action(3); } }
-                        Button { text: Strings.load; enabled: !root.storage-busy && root.can-edit && root.preset-index >= 0; clicked => { root.profile-action(4); } }
-                        Button { text: Strings.remove; enabled: !root.storage-busy && !root.editing && root.preset-index >= 0; clicked => { root.profile-action(5); } }
+                        ComboBox { model: root.saved-presets; current-index <=> root.preset-index; enabled: !root.diagnostic-active && !root.storage-busy && !root.editing; accessible-label: Strings.presets; selected(value) => { root.profile-selected(1); } }
+                        LineEdit { text <=> root.preset-name; placeholder-text: Strings.profile-name; accessible-label: Strings.preset-name; enabled: !root.diagnostic-active && !root.storage-busy && !root.editing; }
+                        Button { text: Strings.save; enabled: !root.diagnostic-active && !root.storage-busy && root.can-edit; clicked => { root.profile-action(3); } }
+                        Button { text: Strings.load; enabled: !root.diagnostic-active && !root.storage-busy && root.can-edit && root.preset-index >= 0; clicked => { root.profile-action(4); } }
+                        Button { text: Strings.remove; enabled: !root.diagnostic-active && !root.storage-busy && !root.editing && root.preset-index >= 0; clicked => { root.profile-action(5); } }
                     }
                     HorizontalLayout { spacing: 8px;
                         Label { text: Strings.storage(root.storage-status); wrap: word-wrap; }
-                        Button { text: Strings.reload; enabled: !root.storage-busy && !root.editing; clicked => { root.profile-action(6); } }
+                        Button { text: Strings.reload; enabled: !root.diagnostic-active && !root.storage-busy && !root.editing; clicked => { root.profile-action(6); } }
                     }
             }
         }
@@ -276,8 +317,8 @@ export component MainWindow inherits Window {
                 }
             }
         }
-        if root.page == 3: Rectangle { background: Theme.panel; border-radius: 10px;
-            VerticalLayout { padding: 18px; spacing: 16px;
+        if root.page == 3: Rectangle { vertical-stretch: 1; background: Theme.panel; border-radius: 10px;
+            ScrollView { VerticalLayout { padding: 18px; spacing: 12px;
                 Text { text: Strings.nav-controls; color: Theme.accent; font-size: 22px; font-weight: 700; }
                 HorizontalLayout { spacing: 16px;
                     Label { text: Strings.ptt-binding; vertical-alignment: center; }
@@ -285,13 +326,45 @@ export component MainWindow inherits Window {
                         current-index: root.ptt-key; accessible-label: Strings.ptt-binding;
                         selected(value) => { root.rebind(self.current-index); }
                     }
-                    Button { text: Strings.save-controls; enabled: !root.storage-busy;
+                    Button { text: Strings.save-controls; enabled: !root.diagnostic-active && !root.storage-busy;
                         clicked => { root.profile-action(7); }
                     }
                 }
                 Label { text: Strings.controls-help; wrap: word-wrap; }
+                Text { text: Strings.background-ptt; color: Theme.accent; font-weight: 700; }
+                HorizontalLayout { spacing: 12px;
+                    ComboBox { model: [Strings.disabled, Strings.global-keyboard, Strings.joystick]; current-index <=> root.background-mode; accessible-label: Strings.background-ptt;
+                        selected(value) => { root.background-action(0); }
+                    }
+                    Button { text: root.background-enabled ? Strings.disable-background : Strings.enable-background; enabled: root.background-enabled || root.background-mode > 0;
+                        clicked => { root.background-action(1); }
+                    }
+                }
+                if root.background-mode == 1: VerticalLayout { spacing: 8px;
+                    ComboBox { model: ["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12"]; current-index <=> root.background-key; accessible-label: Strings.global-keyboard;
+                        selected(value) => { root.background-action(0); }
+                    }
+                    HorizontalLayout {
+                        CheckBox { text: Strings.modifier-shift; checked <=> root.background-shift; toggled => { root.background-action(0); } }
+                        CheckBox { text: Strings.modifier-ctrl; checked <=> root.background-ctrl; toggled => { root.background-action(0); } }
+                        CheckBox { text: Strings.modifier-alt; checked <=> root.background-alt; toggled => { root.background-action(0); } }
+                        CheckBox { text: Strings.modifier-super; checked <=> root.background-super; toggled => { root.background-action(0); } }
+                    }
+                }
+                if root.background-mode == 2: HorizontalLayout { spacing: 12px;
+                    ComboBox { model: root.joysticks; current-index <=> root.joystick-index; accessible-label: Strings.joystick;
+                        selected(value) => { root.background-action(0); }
+                    }
+                    Label { text: Strings.joystick-button; vertical-alignment: center; }
+                    SpinBox { value <=> root.joystick-button; minimum: 1; maximum: 128; accessible-label: Strings.joystick-button;
+                        edited(value) => { root.background-action(0); }
+                    }
+                    Button { text: Strings.refresh-joysticks; clicked => { root.background-action(2); } }
+                }
+                Label { text: Strings.background-status(root.background-state) + (root.background-trigger == "" ? "" : " · " + root.background-trigger); wrap: word-wrap; }
+                Label { text: Strings.background-help; wrap: word-wrap; }
                 Label { text: root.storage-status == 0 ? (root.controls-saved ? Strings.controls-saved : Strings.controls-unsaved) : Strings.storage(root.storage-status); wrap: word-wrap; }
-            }
+            } }
         }
         if root.page == 4: VerticalLayout { spacing: 12px; vertical-stretch: 1;
             Label { text: Strings.server-summary(root.server-version == "" ? Strings.unknown : root.server-version, Strings.coalition-name(root.coalition), root.client-count); wrap: word-wrap; }
@@ -335,20 +408,42 @@ export component MainWindow inherits Window {
                 Label { text: "https://github.com/KanikaBreed/dcs-srs-rust"; wrap: word-wrap; }
             } }
         }
-        if root.page >= 1 && root.page <= 3: Rectangle { vertical-stretch: 1; }
+        if root.page == 2: Rectangle { vertical-stretch: 1; }
         Rectangle {
             min-height: 72px; max-height: 72px;
             background: root.phase == 3 ? Theme.tx : root.can-talk ? Theme.accent : Theme.panel;
             border-radius: 10px;
-            accessible-role: button; accessible-label: Strings.talk(root.ptt-key);
+            border-width: talk-focus.has-focus ? 3px : 0px; border-color: Theme.text;
+            forward-focus: talk-focus;
+            accessible-role: button;
+            accessible-enabled: root.can-talk;
+            accessible-label: Strings.keyboard-talk + " " + Strings.active-radio(root.selected, root.radios[root.selected - 1].enabled ? root.radios[root.selected - 1].frequency : Strings.off);
+            accessible-action-default => { talk-focus.focus(); }
+            talk-focus := FocusScope {
+                enabled: root.can-talk;
+                key-pressed(event) => {
+                    if event.text == " " {
+                        if event.modifiers.control || event.modifiers.alt || event.modifiers.shift || event.modifiers.meta { root.focused-input(2); }
+                        else { root.focused-input(0); }
+                        return accept;
+                    }
+                    return reject;
+                }
+                key-released(event) => {
+                    if event.text == " " { root.focused-input(1); return accept; }
+                    return reject;
+                }
+                focus-lost => { root.focused-input(2); }
+            }
             Text {
-                text: !root.can-talk ? Strings.unavailable : root.phase == 3 ? Strings.release : root.armed ? Strings.talk(root.ptt-key) : Strings.arm(root.ptt-key);
+                text: !root.can-talk ? Strings.unavailable : root.phase == 3 ? Strings.release : root.armed ? Strings.talk(root.background-enabled && root.background-mode == 1 ? 0 : root.ptt-key) : Strings.arm(root.ptt-key);
                 color: root.can-talk ? Theme.background : Theme.muted;
                 horizontal-alignment: center; vertical-alignment: center;
                 font-size: 18px; font-weight: 700;
             }
             TouchArea {
                 enabled: root.can-talk;
+                clicked => { talk-focus.focus(); }
                 pointer-event(event) => {
                     if event.kind == PointerEventKind.cancel { root.pointer-input(2); }
                     else if event.button == PointerEventButton.left {
@@ -359,7 +454,7 @@ export component MainWindow inherits Window {
                 moved => { if self.mouse-x < 0px || self.mouse-y < 0px || self.mouse-x > self.width || self.mouse-y > self.height { root.pointer-input(2); } }
             }
         }
-        Label { text: Strings.ptt-help; horizontal-alignment: center; wrap: word-wrap; }
+        Label { text: root.background-enabled ? Strings.background-active : Strings.ptt-help; horizontal-alignment: center; wrap: word-wrap; }
         Text { text: Strings.problem(root.problem); color: Theme.error; wrap: word-wrap; min-height: 38px; }
         HorizontalLayout {
             Label { text: Strings.counters(root.sent, root.received); }

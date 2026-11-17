@@ -24,6 +24,26 @@ fn main() -> Result<(), Box<dyn Error>> {
             ui.set_page(page);
         }
     }
+    if std::env::args().any(|a| a == "--global-ptt") {
+        ui.set_background_mode(1);
+        ui.set_background_enabled(true);
+        ui.set_background_state(2);
+        ui.set_background_trigger("Ctrl+F8".into());
+        ui.set_background_ctrl(true);
+    }
+    if std::env::args().any(|a| a == "--joystick-ptt") {
+        ui.set_background_mode(2);
+        ui.set_joysticks(Rc::new(VecModel::from(vec!["Preview flight stick".into()])).into());
+        ui.set_joystick_index(0);
+        ui.set_joystick_button(2);
+    }
+    if std::env::args().any(|a| a == "--audio-test") {
+        ui.set_diagnostic_active(true);
+        ui.set_diagnostic_state(1);
+        ui.set_diagnostic_mode(1);
+        ui.set_diagnostic_peak(42.);
+        ui.set_diagnostic_seconds(5);
+    }
     ui.set_callsign("TOC DEMO".into());
     ui.set_server_version("2.4.1.0".into());
     ui.set_coalition(2);
@@ -111,6 +131,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     ui.set_rx_active(!tx);
     ui.set_sent("125".into());
     ui.set_received("250".into());
+    if std::env::args().any(|a| a == "--audio-test") {
+        ui.set_busy(false);
+        ui.set_ready(false);
+        ui.set_phase(0);
+        ui.set_rx_active(false);
+        ui.set_sent("0".into());
+        ui.set_received("0".into());
+    }
     let weak = ui.as_weak();
     let timer = Timer::default();
     timer.start(

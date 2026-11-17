@@ -43,7 +43,9 @@ def verify_keyboard(address):
                     if len(buffer) > 65536:
                         raise RuntimeError("Keyboard probe output exceeded bound")
                 end = buffer.index(marker) + len(marker)
+                consumed = bytes(buffer[:end])
                 del buffer[:end]
+                return consumed
 
             def send(data):
                 os.write(master, data)
@@ -77,14 +79,8 @@ def verify_keyboard(address):
                     receive(b"PTT ARMED")
                     send(press)
                     receive(b"TX LOCAL")
-                    os.kill(process.pid, signal.SIGSTOP)
-                    time.sleep(0.3)
-                    send(release + press + repeat)
-                    os.kill(process.pid, signal.SIGCONT)
-                    receive(b"PTT RELEASED")
-                    receive(b"INPUT READY")
                     send(release)
-                    receive(b"PTT ARMED")
+                    receive(b"RX READY")
                     send(b"2")
                     receive(b"RADIO 2:")
                     send(b"f253.125\r")
@@ -100,11 +96,22 @@ def verify_keyboard(address):
                     receive(b"RX READY")
                     send(repeat)
                     time.sleep(0.05)
-                    send(b"q")
-                    receive(b"STOPPED sent=")
+                    send(release)
+                    receive(b"PTT ARMED")
+                    send(press)
+                    receive(b"TX LOCAL")
+                    # A whole-process interruption now terminates the audio
+                    # session. Queued keys must not restart TX on resume.
+                    os.kill(process.pid, signal.SIGSTOP)
+                    time.sleep(0.35)
+                    send(release + press + repeat)
+                    os.kill(process.pid, signal.SIGCONT)
+                    stopped = receive(b"STOPPED sent=")
+                    if b"TX LOCAL" in stopped:
+                        raise RuntimeError("Suspended session resumed queued TX")
                     process.wait(timeout=4)
-                    if process.returncode:
-                        raise RuntimeError("Keyboard console returned an error")
+                    if process.returncode == 0:
+                        raise RuntimeError("Suspended worker did not report interruption")
                 if termios.tcgetattr(slave) != original:
                     raise RuntimeError("Keyboard console did not restore terminal attributes")
             finally:
@@ -114,7 +121,7 @@ def verify_keyboard(address):
                 process.stderr.close()
                 os.close(master)
                 os.close(slave)
-    print("PASS: simulated terminal release calibration, held F8/release, focus loss, stalled-input backlog, live tuning, hold cap, legacy rejection and terminal restoration; native null audio only.", flush=True)
+    print("PASS: simulated terminal release calibration, held F8/release, focus loss, whole-process interruption without queued TX, live tuning, hold cap, legacy rejection and terminal restoration; native null audio only.", flush=True)
 
 
 if __name__ == "__main__":
