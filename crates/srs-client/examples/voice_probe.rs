@@ -110,6 +110,39 @@ fn buffer_event(voice: &mut VoiceConnection, event: VoiceEvent) -> Result<(), Bo
     Ok(())
 }
 
+// Prime the stock server's cold UDP routing/JIT path independently of the
+// steady 40 ms playout benchmark. Every preflight packet must arrive intact;
+// no jitter/late/concealment assertion in the measured burst is relaxed.
+async fn preflight(
+    sender: &mut VoiceConnection,
+    receiver: &mut VoiceConnection,
+    identity: &str,
+    direction: &str,
+) -> Result<(), Box<dyn Error>> {
+    let mut encoder = Encoder::new()?;
+    let mut bytes = [0; MAX_OPUS_BYTES];
+    let len = encoder.encode(&[0; INPUT_SAMPLES], &mut bytes)?;
+    let expected = ClientId::from_bytes(identity.as_bytes())?;
+    sender.press_ptt(1)?;
+    let result = async {
+        let mut peak_ms = 0_f64;
+        let mut previous = None;
+        for _ in 0..3 {
+            let start = Instant::now();
+            sender.send_frame(&bytes[..len]).await?;
+            let packet = timeout(Duration::from_secs(3), next_voice(receiver)).await??;
+            check(packet.original_client_id == expected && packet.audio == bytes[..len], "preflight voice payload/identity mismatch")?;
+            if let Some(previous) = previous { check(packet.packet_number == previous + 1, "preflight voice sequence mismatch")?; }
+            previous = Some(packet.packet_number);
+            peak_ms = peak_ms.max(start.elapsed().as_secs_f64() * 1000.0);
+        }
+        println!("{{\"preflight\":\"{direction}\",\"packets\":3,\"max_sender_to_receiver_ms\":{peak_ms:.3}}}");
+        Ok::<_, Box<dyn Error>>(())
+    }.await;
+    sender.release_ptt();
+    result
+}
+
 async fn burst(
     sender: &mut VoiceConnection,
     receiver: &mut VoiceConnection,
@@ -212,6 +245,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut tx_voice = tx.open_voice().await?;
     let mut rx_voice = rx.open_voice().await?;
     let mut red_voice = red.open_voice().await?;
+    preflight(&mut tx_voice, &mut rx_voice, TX, "tx-to-rx").await?;
+    preflight(&mut rx_voice, &mut tx_voice, RX, "rx-to-tx").await?;
     burst(&mut tx_voice, &mut rx_voice, "tx-to-rx").await?;
     burst(&mut rx_voice, &mut tx_voice, "rx-to-tx").await?;
     check(
