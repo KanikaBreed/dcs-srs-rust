@@ -311,12 +311,23 @@ async fn pump(
     mut session: Session,
     departed: mpsc::Sender<ClientId>,
     mut updates: srs_client::commands::RadioUpdates,
+    radios: Option<watch::Sender<[srs_client::Radio; srs_client::RADIO_COUNT]>>,
 ) -> Result<(), Error> {
     loop {
         let event = session
             .next_event_with_updates(&mut updates)
             .await
             .map_err(Error::Control)?;
+        if let Some(radios) = &radios {
+            radios.send_if_modified(|current| {
+                if current == session.radios() {
+                    false
+                } else {
+                    *current = session.radios().clone();
+                    true
+                }
+            });
+        }
         if event == Event::EamDisabled {
             return Err(Error::Control(srs_client::Error::EamDisabled));
         }
@@ -336,6 +347,21 @@ pub async fn run(
     inputs: InputEvents,
     status: watch::Sender<Status>,
 ) -> Result<Status, Error> {
+    run_observed(session, capture, playback, inputs, status, None).await
+}
+/// As `run`, with a bounded latest-value view of authoritative radio state.
+/// Includes server-policy changes, not only locally acknowledged edits.
+pub async fn run_observed(
+    session: Session,
+    capture: &mut CaptureReader,
+    playback: &mut PlaybackWriter,
+    inputs: InputEvents,
+    status: watch::Sender<Status>,
+    radios: Option<watch::Sender<[srs_client::Radio; srs_client::RADIO_COUNT]>>,
+) -> Result<Status, Error> {
+    if let Some(radios) = &radios {
+        radios.send_replace(session.radios().clone());
+    }
     let mut worker = Worker {
         voice: None,
         capture,
@@ -350,7 +376,7 @@ pub async fn run(
     let (sender, receiver) = mpsc::channel(32);
     tokio::select! {
         biased;
-        result = pump(session, sender, inputs.1) => { result?; Err(VoiceError::ControlDisconnected.into()) },
+        result = pump(session, sender, inputs.1, radios) => { result?; Err(VoiceError::ControlDisconnected.into()) },
         result = worker.drive(inputs.0, receiver) => result,
     }
 }

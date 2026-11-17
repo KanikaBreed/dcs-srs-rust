@@ -70,6 +70,21 @@ async fn next_playout(
     voice: &mut VoiceConnection,
 ) -> Result<(Playout, [i16; OUTPUT_SAMPLES], f64), Box<dyn Error>> {
     loop {
+        // Process datagrams already waiting on the socket before deciding a
+        // playout slot is missing. A delayed wake can make both the timer and
+        // UDP readable; polling the timer first would manufacture concealment.
+        // Bound the drain so a busy socket cannot indefinitely defer playout.
+        for _ in 0..16 {
+            let event = tokio::select! {
+                biased;
+                event = voice.next_event() => Some(event?),
+                _ = std::future::ready(()) => None,
+            };
+            let Some(event) = event else {
+                break;
+            };
+            buffer_event(voice, event)?;
+        }
         let mut pcm = [0; OUTPUT_SAMPLES];
         let before = Instant::now();
         if let Some(frame) = voice.poll_audio(&mut pcm)? {
@@ -80,15 +95,19 @@ async fn next_playout(
             .unwrap_or_else(|| Instant::now() + Duration::from_secs(3));
         tokio::select! {
             biased;
+            event = voice.next_event() => buffer_event(voice, event?)?,
             _ = sleep_until(deadline) => {},
-            event = voice.next_event() => if let VoiceEvent::Voice(packet) = event? {
-                let outcome = voice.buffer_voice(&packet)?;
-                if !matches!(outcome, QueueOutcome::Queued | QueueOutcome::Resynchronized) {
-                    return Err(format!("unexpected voice receive outcome: {outcome:?}").into());
-                }
-            }
         }
     }
+}
+fn buffer_event(voice: &mut VoiceConnection, event: VoiceEvent) -> Result<(), Box<dyn Error>> {
+    if let VoiceEvent::Voice(packet) = event {
+        let outcome = voice.buffer_voice(&packet)?;
+        if !matches!(outcome, QueueOutcome::Queued | QueueOutcome::Resynchronized) {
+            return Err(format!("unexpected voice receive outcome: {outcome:?}").into());
+        }
+    }
+    Ok(())
 }
 
 async fn burst(
@@ -127,10 +146,13 @@ async fn burst(
         for index in 0..FRAMES {
             let (frame, pcm, worker_us) =
                 timeout(Duration::from_secs(3), next_playout(receiver)).await??;
-            check(
-                frame.kind == srs_audio::jitter::FrameKind::Decoded,
-                "unexpected concealment in loopback burst",
-            )?;
+            if frame.kind != srs_audio::jitter::FrameKind::Decoded {
+                return Err(format!(
+                    "unexpected concealment in {direction} at frame {index}, packet {}, kind {:?}",
+                    frame.packet_number, frame.kind
+                )
+                .into());
+            }
             if let Some(previous) = sequence {
                 check(
                     frame.packet_number == previous + 1,

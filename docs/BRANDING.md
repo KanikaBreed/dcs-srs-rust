@@ -20,4 +20,4 @@ Show local TX activity honestly; do not present it as confirmed remote reception
 
 ## Review
 
-Capture actual implemented screens with synthetic server names and callsigns. Test narrow phones, tablets, desktop scaling, long labels, and simultaneous RX states. Compare before/after for UI changes. Toolkit widgets, tokens, and screenshot commands will be documented when implemented; none exist in the scaffold.
+Capture actual implemented screens with synthetic server names and callsigns. Test narrow phones, tablets, desktop scaling, long labels, and simultaneous RX states. Compare before/after for UI changes. The desktop preview uses Slint Fluent Dark widgets, a named Theme token global, a fixed visible transmit/status area and scrolling radio editors. [DESKTOP.md](DESKTOP.md) provides synthetic RX/TX screenshot commands. Mobile layouts, full screen-reader validation and broader scaling checks remain pending.

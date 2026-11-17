@@ -1,0 +1,28 @@
+[package]
+name = "srs-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Windows and Linux standalone SRS TOC desktop client"
+
+[dependencies]
+slint = { version = "=1.19.0", default-features = false, features = ["std", "compat-1-18", "backend-winit", "renderer-software", "accessibility", "unstable-winit-030"] }
+srs-client = { path = "../srs-client" }
+srs-device = { path = "../srs-device" }
+srs-protocol = { path = "../srs-protocol" }
+srs-toc = { path = "../srs-toc" }
+tokio = { version = "1.54.1", features = ["rt", "macros", "sync", "time"] }
+getrandom = "0.4.2"
+
+[build-dependencies]
+slint-build = "=1.19.0"
+
+[dev-dependencies]
+srs-audio = { path = "../srs-audio" }
+
+[lints.rust]
+# Slint-generated component code uses toolkit-managed unsafe internally.
+# Only the generated module allows it; hand-written modules forbid unsafe.
+unsafe_code = "deny"
