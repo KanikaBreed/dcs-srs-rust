@@ -529,3 +529,45 @@ async fn aggregate_roster_growth_across_small_messages_is_bounded() {
     assert_eq!(client.state(), State::Disconnected);
     server.await.unwrap();
 }
+
+#[tokio::test]
+async fn cancelling_control_read_immediately_revokes_an_existing_udp_ptt() {
+    let (listener, address) = listener().await;
+    let udp = tokio::net::UdpSocket::bind(address).await.unwrap();
+    let echo = tokio::spawn(async move {
+        let mut bytes = [0; 22];
+        let (n, peer) = udp.recv_from(&mut bytes).await.unwrap();
+        assert_eq!(n, 22);
+        udp.send_to(&bytes, peer).await.unwrap();
+    });
+    let server = tokio::spawn(async move {
+        let mut peer = accept(listener).await;
+        login(&mut peer, 2).await;
+        assert_eq!(read(&mut peer).await["MsgType"], 3);
+        let mut line = String::new();
+        assert_eq!(peer.read_line(&mut line).await.unwrap(), 0);
+    });
+    let mut client = Session::connect(address, identity(), options())
+        .await
+        .unwrap();
+    client.authenticate(PASSWORD).await.unwrap();
+    let mut radios = disabled_radios();
+    radios[1] = Radio::tuned(251_000_000.0, Modulation::AM);
+    client.set_radios(radios).await.unwrap();
+    let mut voice = client.open_voice().await.unwrap();
+    voice.press_ptt(1).unwrap();
+    assert!(voice.is_transmitting());
+    assert!(
+        timeout(Duration::from_millis(20), client.next_event())
+            .await
+            .is_err()
+    );
+    assert!(!voice.is_ready());
+    assert!(!voice.is_transmitting());
+    assert_eq!(
+        voice.send_frame(&[1]).await,
+        Err(srs_client::voice::VoiceError::ControlDisconnected)
+    );
+    echo.await.unwrap();
+    server.await.unwrap();
+}

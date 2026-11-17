@@ -20,6 +20,8 @@ __pycache__/
 
 /tools/reference-fixtures/bin/
 /tools/reference-fixtures/obj/
+/tools/voice-reference/bin/
+/tools/voice-reference/obj/
 
 /fuzz/corpus/
 /fuzz/artifacts/

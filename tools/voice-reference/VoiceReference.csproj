@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <Target Name="RequireReference" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(SrsReferenceRoot)' == ''" Text="Provide -p:SrsReferenceRoot=/path/to/pinned/upstream" />
+  </Target>
+  <ItemGroup>
+    <Compile Include="$(SrsReferenceRoot)/Common/Audio/Opus/API.cs" Link="Upstream/API.cs" />
+    <Compile Include="$(SrsReferenceRoot)/Common/Audio/Opus/Core/OpusEncoder.cs" Link="Upstream/OpusEncoder.cs" />
+    <Compile Include="$(SrsReferenceRoot)/Common/Audio/Opus/Core/OpusDecoder.cs" Link="Upstream/OpusDecoder.cs" />
+  </ItemGroup>
+</Project>

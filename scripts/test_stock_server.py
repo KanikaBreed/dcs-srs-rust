@@ -50,7 +50,7 @@ def main():
             temporary.replace(binary)
         verified_binary(binary)
         binary.chmod(binary.stat().st_mode | 0o100)
-        subprocess.run(["cargo", "build", "--locked", "-p", "srs-client", "--example", "stock_probe"], cwd=ROOT, check=True)
+        subprocess.run(["cargo", "build", "--locked", "-p", "srs-client", "--examples"], cwd=ROOT, check=True)
         namespace = os.readlink("/proc/self/ns/net")
         command = ["unshare", "--net"]
         if os.geteuid() != 0:
@@ -61,7 +61,7 @@ def main():
         if os.environ.get("SRS_TEST_SUDO_NAMESPACE") == "1":
             command = ["sudo", "--non-interactive", "unshare", "--net", sys.executable,
                        str(Path(__file__).resolve()), "--server", str(binary), "--isolated-from", namespace]
-        subprocess.run(command, cwd=ROOT, check=True, timeout=90)
+        subprocess.run(command, cwd=ROOT, check=True, timeout=120)
         return
     if os.readlink("/proc/self/ns/net") == args.isolated_from:
         raise SystemExit("Refusing to start stock server in the parent's network namespace")
@@ -106,6 +106,9 @@ def main():
                             time.sleep(0.1)
                     subprocess.run([str(probe), f"127.0.0.1:{port}", "enabled" if enabled else "disabled"],
                                    cwd=ROOT, check=True, timeout=30)
+                    if enabled:
+                        subprocess.run([str(ROOT / "target/debug/examples/voice_probe"), f"127.0.0.1:{port}"],
+                                       cwd=ROOT, check=True, timeout=30)
                 finally:
                     if process.poll() is None:
                         os.killpg(process.pid, signal.SIGTERM)

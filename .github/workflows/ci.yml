@@ -33,6 +33,8 @@ jobs:
           python-version: '3.13'
       - name: Set up Rust
         run: rustup show
+      - name: Check native codec build tools
+        run: cmake --version
       - name: Check documentation and Rust workspace
         run: python scripts/check.py
       - name: Compile fuzz targets
@@ -63,3 +65,12 @@ jobs:
           git -C "$srs_reference" checkout --detach FETCH_HEAD
           cargo run --locked -p srs-protocol --example roundtrip_fixtures -- crates/srs-protocol/tests/fixtures "$RUNNER_TEMP/rust-wire"
           python scripts/reference_fixtures.py --reference "$srs_reference" --verify-dir "$RUNNER_TEMP/rust-wire"
+      - name: Install native reference codec
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libopus0
+      - name: Verify Opus with original C# wrappers
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: python scripts/test_reference_codec.py --reference "$RUNNER_TEMP/srs-reference"

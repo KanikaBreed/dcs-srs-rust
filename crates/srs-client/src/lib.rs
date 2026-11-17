@@ -3,12 +3,13 @@
 //! (GPLv3), upstream d01f540ce5e363e9ac841775c8f7e2253138cd81.
 //!
 //! A caller-driven session: keep polling `next_event` to receive updates and send
-//! periodic radio refreshes. No detached tasks, unbounded event queues, audio, or
+//! periodic radio refreshes. No detached tasks, unbounded event queues, device I/O, or
 //! automatic reconnect. Dropping a session closes TCP. Cancelling a pending
 //! public async operation also closes TCP; reconnect with a new session.
 
 mod model;
 mod transport;
+pub mod voice;
 
 pub use model::{Coalition, EAM_UNIT_ID, Identity, RADIO_COUNT, Radio, disabled_radios};
 use serde_json::{Map, Value};
@@ -17,6 +18,7 @@ use srs_protocol::{
     voice::{ClientId, Modulation},
 };
 use std::{collections::BTreeMap, fmt, net::SocketAddr, time::Duration};
+use tokio::sync::watch;
 use tokio::time::{Instant, timeout_at};
 use transport::Transport;
 
@@ -142,6 +144,8 @@ pub struct Session {
     settings: BTreeMap<String, String>,
     server_version: Option<String>,
     refresh_at: Instant,
+    address: SocketAddr,
+    voice_authorization: watch::Sender<voice::Authorization>,
 }
 
 impl Session {
@@ -171,6 +175,8 @@ impl Session {
             settings: BTreeMap::new(),
             server_version: None,
             refresh_at: Instant::now() + REFRESH_INTERVAL,
+            address,
+            voice_authorization: watch::channel(voice::Authorization::disabled()).0,
         };
         transport.send(&session.message(MessageType::SYNC)).await?;
         loop {
@@ -210,6 +216,60 @@ impl Session {
         self.clients.clear();
         self.client_sizes.clear();
         self.roster_bytes = 0;
+        self.publish_voice_authorization();
+    }
+
+    /// Register UDP for this exact TCP session. Registration establishes server
+    /// reachability, not coalition permission. PTT still requires authenticated,
+    /// enabled radio state; control disconnect/cancellation invalidates it.
+    pub async fn open_voice(&self) -> Result<voice::VoiceConnection, voice::VoiceError> {
+        let transport = self
+            .transport
+            .as_ref()
+            .ok_or(voice::VoiceError::ControlDisconnected)?;
+        voice::VoiceConnection::register(
+            self.address,
+            self.identity.id,
+            self.voice_authorization.subscribe(),
+            transport.liveness(),
+            self.options.operation_timeout,
+        )
+        .await
+    }
+
+    fn publish_voice_authorization(&self) {
+        let previous = self.voice_authorization.borrow().revision;
+        let mut authorization = voice::Authorization::disabled();
+        // Never recycle a held-PTT revision, even in the theoretical overflow case.
+        if let Some(revision) = previous.checked_add(1) {
+            authorization.revision = revision;
+            if self.coalition.is_some() {
+                for (slot, radio) in self.radios.iter().enumerate() {
+                    if radio.modulation != Modulation::DISABLED
+                        && (radio.modulation == Modulation::INTERCOM
+                            || radio.frequency_hz > 10_000.0)
+                    {
+                        authorization.channels[slot] = Some(voice::Channel {
+                            frequency: srs_protocol::voice::Frequency {
+                                hz: radio.frequency_hz,
+                                modulation: radio.modulation,
+                                encryption: radio.encryption_key.unwrap_or(0),
+                            },
+                            unit_id: if radio.modulation == Modulation::INTERCOM
+                                && radio.intercom_unit_id != 0
+                            {
+                                radio.intercom_unit_id
+                            } else {
+                                self.identity.unit_id
+                            },
+                        });
+                    }
+                }
+            }
+        } else {
+            authorization.revision = u64::MAX;
+        }
+        self.voice_authorization.send_replace(authorization);
     }
 
     /// Password is borrowed and is not retained by the session or diagnostics.
@@ -253,6 +313,7 @@ impl Session {
                     return Err(Error::EamDisabled);
                 }
                 self.transport = Some(transport);
+                self.publish_voice_authorization();
                 return self.coalition.ok_or(Error::AuthenticationRejected);
             }
             self.apply(reply)?;
@@ -274,9 +335,15 @@ impl Session {
         self.validate_radios(&radios)?;
         let mut message = self.message(MessageType::RADIO_UPDATE);
         message.client = Some(model::client_wire(&self.identity, self.coalition, &radios));
+        // Retuning releases held PTT before a slow control write can wait.
+        self.voice_authorization.send_modify(|authorization| {
+            authorization.revision = authorization.revision.saturating_add(1);
+            authorization.channels = [None; RADIO_COUNT];
+        });
         let mut transport = self.transport.take().ok_or(Error::Disconnected)?;
         transport.send(&message).await?;
         self.radios = radios;
+        self.publish_voice_authorization();
         self.refresh_at = Instant::now() + REFRESH_INTERVAL;
         self.transport = Some(transport);
         Ok(())
@@ -287,6 +354,7 @@ impl Session {
         let mut transport = self.transport.take().ok_or(Error::Disconnected)?;
         self.coalition = None;
         self.radios = disabled_radios();
+        self.publish_voice_authorization();
         transport
             .send(&self.message(MessageType::EXTERNAL_AWACS_MODE_DISCONNECT))
             .await?;
@@ -456,8 +524,10 @@ impl Session {
             kind => Event::Ignored(kind),
         };
         if was_authenticated && self.coalition.is_none() {
+            self.publish_voice_authorization();
             Ok(Event::EamDisabled)
         } else if radios_adjusted {
+            self.publish_voice_authorization();
             Ok(Event::RadiosAdjusted)
         } else {
             Ok(event)
