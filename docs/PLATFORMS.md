@@ -1,6 +1,6 @@
 # Platform implementation plan
 
-All application rows below are planned. The bootstrap can compile its shared library on desktop hosts; no platform currently has a radio application.
+Application delivery below remains planned. The shared radio engine and explicit desktop audio probe build on host targets. The native Linux adapter is exercised with an isolated null PCM; physical audio and full radio application validation remain pending. See [device guide](DEVICES.md).
 
 | Target | Native responsibilities | Acceptance gate |
 |---|---|---|
@@ -11,7 +11,7 @@ All application rows below are planned. The bootstrap can compile its shared lib
 
 ## Shared candidates
 
-[CPAL](https://github.com/RustAudio/cpal) lists Windows, Linux, Android, and iOS backends. [Slint](https://slint.dev/faqs) supports those UI targets. These are candidates, not guarantees of lifecycle/accessory support. Verify the chosen release and native integration in the first spike.
+[CPAL 0.18.2](https://docs.rs/cpal/0.18.2/cpal/) is now used by the desktop probe with WASAPI, ALSA, and CoreAudio. Its mobile backends are not a validated lifecycle integration. [Slint](https://slint.dev/faqs) supports those UI targets. The UI remains a candidate; neither dependency guarantees lifecycle/accessory support. Verify the chosen release and native integration in the first spike.
 
 ## Android
 

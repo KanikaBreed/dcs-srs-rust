@@ -1,0 +1,19 @@
+[package]
+name = "srs-device"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Explicit desktop audio streams and bounded SRS callback bridges"
+
+[dependencies]
+cpal = "0.18.2"
+rtrb = "0.4.1"
+srs-audio = { path = "../srs-audio" }
+
+[dev-dependencies]
+allocation-counter = "0.8.1"
+
+[lints]
+workspace = true

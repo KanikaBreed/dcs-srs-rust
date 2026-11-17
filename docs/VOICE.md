@@ -46,4 +46,4 @@ Automated tests also cover dropped-registration retry, matched keepalives, 15/42
 
 ## Remaining milestone work
 
-A01 remains awaiting full validation: stock desktop-client voice exchange, broader radio/effects/mixing behavior, WAN/skew/soak tests, and audible playout. Receive policy, bounded sequence/jitter handling, deterministic impairment tests, and worker playout measurements are now implemented. A02 adds intentional device capture/playback and hardware PTT with human listening. Mobile lifecycle and UI work remain separate milestones.
+A01 remains awaiting full validation: stock desktop-client voice exchange, broader radio/effects/mixing behavior, WAN/skew/soak tests, and audible playout. Receive policy, bounded sequence/jitter handling, deterministic impairment tests, and worker playout measurements are now implemented. A02 now includes an [explicit desktop device probe](DEVICES.md); integrated SRS device operation, hardware PTT, and human listening remain pending. Mobile lifecycle and UI work remain separate milestones.
