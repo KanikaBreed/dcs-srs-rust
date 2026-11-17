@@ -1,6 +1,6 @@
 # TCP and External AWACS Mode sessions
 
-`srs-client` is a library with runnable conformance probes. Its TCP/EAM contract is described here; [VOICE.md](VOICE.md) covers the UDP transport, session-bound PTT gate, and Opus adapter. There is no microphone/speaker I/O, hardware input, user interface, or reconnect worker yet.
+`srs-client` is a library with runnable conformance probes. Its TCP/EAM contract is described here; [VOICE.md](VOICE.md) covers the UDP transport, session-bound PTT gate, and Opus adapter. Device I/O and session orchestration now live in the separate [TOC console](TOC_CONSOLE.md); this crate itself has no device API or reconnect worker.
 
 ## Calling the library
 
@@ -15,7 +15,7 @@ Unknown message types generate an `Ignored` event. Unknown peer fields and serve
 
 ## Cancellation, errors, and bounds
 
-Cancelling any pending public async session operation closes TCP. This is a deliberate first API contract: partially written frames, abandoned login replies, and stale authorization cannot be reused. In particular, selecting `next_event()` against a timer and dropping it disconnects; a future orchestration layer should own and continuously poll the session. Internal read cancellation at a refresh deadline preserves fragmented and coalesced data.
+Cancelling any pending public async session operation closes TCP. This is a deliberate first API contract: partially written frames, abandoned login replies, and stale authorization cannot be reused. In particular, selecting `next_event()` against a timer and dropping it disconnects; the `srs-toc` orchestration layer owns and continuously polls the session. Internal read cancellation at a refresh deadline preserves fragmented and coalesced data.
 
 Connect/SYNC, login response, and writes use configurable timeouts (default 10 seconds, maximum 90). Connect/SYNC has a shared receive deadline, while a pending write has its own bound. `next_event` may wait indefinitely on an idle server while sending refreshes; it does not assume the server sends echo pings. There is no automatic reconnect or mobile network-handover handling.
 
@@ -50,4 +50,4 @@ CI opts into `SRS_TEST_SUDO_NAMESPACE=1` for hosts that prohibit unprivileged us
 
 The probe asserts SYNC version, wrong-password rejection, Blue and Red authentication, radio updates observed by another Rust endpoint through the server, AM/FM, guard/key fields, EAM leave/reset, peer disconnection, and rejection of an old client version. Disabled-mode testing checks both the client's refusal to send credentials and the stock server's coalition-0 response to a direct synthetic request. It handles unrelated interleaved broadcasts while awaiting replies.
 
-This establishes control interoperability with an unmodified server. The runner additionally tests generated Opus through UDP in both directions; see [VOICE.md](VOICE.md) for measurements and limits. Full stock-client audio interoperability, receive eligibility/jitter buffering, human listening, PTT hardware, and Android/iOS execution remain pending.
+This establishes control interoperability with an unmodified server. The runner additionally tests generated Opus through UDP in both directions; see [VOICE.md](VOICE.md) for measurements and limits. Full stock-client audio interoperability, human listening, PTT hardware, and Android/iOS execution remain pending.
