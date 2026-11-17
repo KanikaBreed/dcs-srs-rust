@@ -6,6 +6,7 @@ pub use input::{Controller, INPUT_LEASE, InputEvents, controls};
 use srs_audio::{Encoder, MAX_OPUS_BYTES, OUTPUT_SAMPLES};
 use srs_client::{
     Event, Session,
+    receive::Monitor,
     voice::{VoiceConnection, VoiceError, VoiceEvent},
 };
 use srs_device::bridge::{
@@ -74,6 +75,9 @@ pub struct Status {
     pub phase: Phase,
     pub sent_frames: u64,
     pub mixed_frames: u64,
+    /// Mix ticks containing decoded voice per radio, including muted input.
+    /// Several speakers on one radio in the same tick increment it only once.
+    pub received_frames: [u64; srs_client::RADIO_COUNT],
     pub peak_speakers: usize,
     pub clipped_samples: u64,
     pub rejected_packets: u64,
@@ -117,6 +121,7 @@ impl Worker<'_> {
         &mut self,
         mut inputs: watch::Receiver<input::Intent>,
         mut departed: mpsc::Receiver<ClientId>,
+        mut monitor: watch::Receiver<Monitor>,
     ) -> Result<Status, Error> {
         let capture_signal = self.capture.stop_signal();
         let playback_signal = self.playback.stop_signal();
@@ -134,12 +139,26 @@ impl Worker<'_> {
         ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
         let mut mix_at = Instant::now();
         self.release()?;
+        let mut levels = *monitor.borrow_and_update();
+        self.voice
+            .as_mut()
+            .ok_or(VoiceError::NotReady)?
+            .set_monitor(levels);
         loop {
             if inputs.has_changed().is_err() {
                 return Ok(self.stats);
             }
             if capture_signal.is_stopped() || playback_signal.is_stopped() {
                 return Err(srs_device::Error::Stopped.into());
+            }
+            let latest = *monitor.borrow_and_update();
+            if latest != levels {
+                levels = latest;
+                self.playback.flush()?;
+                self.voice
+                    .as_mut()
+                    .ok_or(VoiceError::NotReady)?
+                    .set_monitor(levels);
             }
             let revision = self
                 .voice
@@ -216,7 +235,14 @@ impl Worker<'_> {
                 }
                 let voice = self.voice.as_mut().ok_or(VoiceError::NotReady)?;
                 let mix = voice.poll_mix(&mut pcm)?;
-                if voice.authorization_revision()? == authorization && mix.speakers > 0 {
+                if voice.authorization_revision()? == authorization {
+                    for (slot, count) in self.stats.received_frames.iter_mut().enumerate() {
+                        if mix.received_radios & (1 << slot) != 0 {
+                            *count = count.saturating_add(1);
+                        }
+                    }
+                }
+                if voice.authorization_revision()? == authorization && mix.audible_speakers > 0 {
                     match self.playback.enqueue(&pcm, now.into_std()) {
                         Ok(()) => {
                             self.stats.mixed_frames += 1;
@@ -235,6 +261,7 @@ impl Worker<'_> {
             tokio::select! {
                 biased;
                 _ = inputs.changed() => (),
+                _ = monitor.changed() => (),
                 peer = departed.recv() => match peer {
                     Some(peer) => { voice.forget_speaker(peer); self.playback.flush()?; }
                     None => return Err(VoiceError::ControlDisconnected.into()),
@@ -377,6 +404,6 @@ pub async fn run_observed(
     tokio::select! {
         biased;
         result = pump(session, sender, inputs.1, radios) => { result?; Err(VoiceError::ControlDisconnected.into()) },
-        result = worker.drive(inputs.0, receiver) => result,
+        result = worker.drive(inputs.0, receiver, inputs.2) => result,
     }
 }

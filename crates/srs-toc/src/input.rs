@@ -1,5 +1,6 @@
 //! One input owner, a latest-value channel, and non-revivable 250 ms leases.
 use crate::Error;
+use srs_client::receive::{DEFAULT_MONITOR, Monitor};
 use std::time::Duration;
 use tokio::{sync::watch, time::Instant};
 
@@ -15,10 +16,12 @@ pub struct Controller {
     sender: watch::Sender<Intent>,
     radios: srs_client::commands::RadioControl,
     configuring: bool,
+    monitor: watch::Sender<Monitor>,
 }
 pub struct InputEvents(
     pub(crate) watch::Receiver<Intent>,
     pub(crate) srs_client::commands::RadioUpdates,
+    pub(crate) watch::Receiver<Monitor>,
 );
 pub fn controls() -> (Controller, InputEvents) {
     let (sender, receiver) = watch::channel(Intent {
@@ -26,17 +29,25 @@ pub fn controls() -> (Controller, InputEvents) {
         authorization: None,
         held: None,
     });
+    let (monitor, levels) = watch::channel(DEFAULT_MONITOR);
     let (radios, updates) = srs_client::commands::radio_controls();
     (
         Controller {
             sender,
             radios,
             configuring: false,
+            monitor,
         },
-        InputEvents(receiver, updates),
+        InputEvents(receiver, updates, levels),
     )
 }
 impl Controller {
+    /// Latest receive-only levels; does not retune or grant/revoke transmit.
+    /// The worker flushes downstream audio before mixing with the new levels.
+    pub fn set_monitor(&mut self, monitor: Monitor) {
+        self.monitor.send_replace(monitor);
+    }
+
     /// Release PTT before changing radio state. A cancelled update leaves this
     /// controller inhibited until another edit is acknowledged; never infer the
     /// radio state from a dropped write result.

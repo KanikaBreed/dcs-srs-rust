@@ -513,3 +513,69 @@ async fn complete_preset_releases_held_ptt_and_publishes_one_validated_update() 
     assert_eq!(packet.frequencies[0].encryption, 7);
     h.stop().await;
 }
+
+#[tokio::test]
+async fn monitor_mute_flushes_partial_playback_and_tracks_muted_rx_without_tcp_edits() {
+    use srs_client::receive::{DEFAULT_MONITOR, RadioLevel};
+    let mut h = Harness::new(false).await;
+    h.remote_frame(1, b'B').await;
+    timeout(Duration::from_secs(3), async {
+        while h.status.borrow_and_update().received_frames[1] == 0 {
+            h.status.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    let mut pcm = [0f32; 480];
+    h.output.process(&mut pcm, Instant::now().into_std());
+    assert!(pcm.iter().any(|n| n.abs() > 0.05));
+    let mut levels = DEFAULT_MONITOR;
+    levels[1] = RadioLevel::new(35, true).unwrap();
+    h.owner.as_mut().unwrap().set_monitor(levels);
+    sleep(Duration::from_millis(15)).await;
+    pcm.fill(1.);
+    h.output.process(&mut pcm, Instant::now().into_std());
+    assert!(
+        pcm.iter().all(|n| *n == 0.),
+        "mute must discard the partial native frame"
+    );
+    let count = h.status.borrow().received_frames[1];
+    // A new original speaker avoids depending on real-time PLC sequence timing.
+    h.remote_frame(1, b'C').await;
+    timeout(Duration::from_secs(3), async {
+        while h.status.borrow_and_update().received_frames[1] == count {
+            h.status.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(h.status.borrow().received_frames[2], 0);
+    pcm.fill(1.);
+    h.output.process(&mut pcm, Instant::now().into_std());
+    assert!(pcm.iter().all(|n| *n == 0.), "muted RX must stay silent");
+    assert!(
+        timeout(Duration::from_millis(20), h.tcp.fill_buf())
+            .await
+            .is_err(),
+        "local monitor change wrote to TCP"
+    );
+    let count = h.status.borrow().received_frames[1];
+    h.owner.as_mut().unwrap().set_monitor(DEFAULT_MONITOR);
+    h.remote_frame(1, b'D').await;
+    // Unmuting may expose a remaining C concealment tail before D's new frame.
+    // Keep consuming 10 ms callbacks while D traverses its jitter delay, as a
+    // real output device does. One callback is not a promise of new voice.
+    timeout(Duration::from_secs(3), async {
+        loop {
+            h.output.process(&mut pcm, Instant::now().into_std());
+            if h.status.borrow().received_frames[1] > count && pcm.iter().any(|n| n.abs() > 0.05) {
+                break;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(h.status.borrow().playback_overflows, 0);
+    h.stop().await;
+}
