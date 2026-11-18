@@ -4,7 +4,7 @@ This is a development validation procedure. Generated audio, null PCM, virtual i
 
 ## Offline check in the client
 
-Disconnect, open **Connection**, select microphone/output, and choose one of:
+Disconnect, select microphone/output in **General**, then open **Settings** and choose one of:
 
 - **Microphone level**: captures without playback and shows peak level/clipped samples.
 - **Hear microphone**: plays the selected microphone through the SRS Opus encoder/decoder. Wear headphones to avoid feedback.
@@ -80,7 +80,7 @@ The GUI integration test forces TCP loss during TX, checks finite receive-only r
 
 The native file chooser test runs the real rfd D-Bus request/response path against a private simulated portal, including cancel, escaped filenames, successful import/export, existing destination, duplicate preset and malformed JSON. Native Windows dialogs and visual interaction with the desktop portal remain manual checks.
 
-The Wayland script starts its own virtual KWin, runtime/config/cache/data directories and private bus. It renders all six pages plus keyboard, joystick and audio-test states at 100% and 150%, without opening audio or using the shared display. This proves native Wayland rendering in that environment, not real portal permissions or screen-reader usability. Actual Tab order, screen readers, long translations, Windows scaling and permission dialogs remain on the [human checklist](DESKTOP_VALIDATION.md).
+The Wayland script starts its own virtual KWin, runtime/config/cache/data directories and private bus. It renders all seven pages plus keyboard, joystick and audio-test states at 100% and 150%, without opening audio or using the shared display. This proves native Wayland rendering in that environment, not real portal permissions or screen-reader usability. Actual Tab order, screen readers, long translations, Windows scaling and permission dialogs remain on the [human checklist](DESKTOP_VALIDATION.md).
 
 ## Local software evidence for the desktop-input batch
 

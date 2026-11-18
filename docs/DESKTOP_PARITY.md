@@ -24,3 +24,17 @@ Reference paths below are relative to `DCS-SR-Client/UI/ClientWindow/`. The refe
 Automation uses generated audio, loopback/private stock SRS, process-local null audio, temporary profiles, virtual joystick, private simulated portals and private Xvfb/KWin. Physical native file dialogs, real device removal, actual keys/joysticks, headsets, listening, Wayland permission interaction, accessibility and installer/signing acceptance must be recorded separately. A completed software task does not make those human checks pass.
 
 Connection now includes finite offline microphone/codec-loopback/stereo checks; Controls adds background input settings. See [voice validation](VOICE_VALIDATION.md) for scope and pending listening checks.
+
+## Stock-style Linux client direction
+
+The requested direction is familiar stock SRS look, feel and feature coverage, with usability improvements. The first layout pass follows `MainWindow.xaml` at the pinned revision: General, Controls, Favourites, Settings and Help, with direct Radio and Server/client access. General groups devices and standalone EAM connection fields, exposes working shortcuts, and shows server/local-audio/client status. Settings contains the existing connection-recovery and offline audio controls. Persistent TX/RX, selected radio, disconnect and diagnostic Stop improve visibility across pages. This remains a resizable independent UI, not a pixel-identical WPF port.
+
+Feature work proceeds separately from appearance, using the inventory above:
+
+1. Audio controls: master output/microphone gain, continuous channel balance and signal processing, with deterministic signal and listening validation.
+2. Input parity: per-radio selection/PTT, next/previous radio and tuning actions, broader HOTAS bindings.
+3. Radio workflow: compact radio window/overlay, server presets and transmitter information where authorized by server policy.
+4. Optional VOX, radio effects, recording and consent, each with explicit behavior and validation.
+5. DCS cockpit radio/Lua integration and its game status; standalone EAM does not establish this capability.
+
+These items remain planned unless the inventory explicitly says implemented. No inactive stock-style controls imply features that are not present. Hardware and visual acceptance remain separate from automated checks.

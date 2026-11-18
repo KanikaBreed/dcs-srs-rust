@@ -1128,7 +1128,7 @@ fn setup(profile_path: Option<std::path::PathBuf>) -> Result<Application, slint:
         }};
     }
     callback!(on_navigate, |state, window, page| {
-        if (0..=5).contains(&page) {
+        if (0..=6).contains(&page) {
             state.invalidate(&window);
             window.set_page(page);
         }
@@ -1423,7 +1423,7 @@ mod tests {
                     assert_eq!(ui.get_coalition(), 2);
                     assert_eq!(ui.get_policy().row_count(), 15);
                     assert_eq!(ui.get_policy().row_data(7).unwrap().state, 1);
-                    for page in 0..=5 {
+                    for page in 0..=6 {
                         ui.invoke_navigate(page);
                         assert_eq!(ui.get_page(), page);
                     }
@@ -1756,7 +1756,7 @@ mod tests {
                     *step = 36;
                 }
                 36 if !ui.get_busy() => {
-                    ui.invoke_navigate(1);
+                    ui.invoke_navigate(6);
                     ui.invoke_diagnostic_action(1);
                     assert!(ui.get_diagnostic_active());
                     ui.invoke_connect_requested();

@@ -139,6 +139,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         ui.set_sent("0".into());
         ui.set_received("0".into());
     }
+    if std::env::args().any(|a| a == "--offline") {
+        ui.set_busy(false);
+        ui.set_ready(false);
+        ui.set_armed(false);
+        ui.set_phase(0);
+        ui.set_rx_active(false);
+        ui.set_sent("0".into());
+        ui.set_received("0".into());
+    }
     let weak = ui.as_weak();
     let timer = Timer::default();
     timer.start(
