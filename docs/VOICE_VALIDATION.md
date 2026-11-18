@@ -46,6 +46,8 @@ The Windows-to-Linux frequency isolation check was also reported working. With o
 
 The prepared test used Blue External AWACS Mode, radio 1 at 251.000 MHz AM, with encryption off. The running Linux development build came from clean source `be92335989ea7143fe968dd56ac50887e7cedecb`, whose tree matches merged main `bcf2c8f1525d8ad599c7b375f84edd10f50950cd`. Its executable SHA-256 is `ce1d1756186e2632fe47aa3939a5864903a100d946def774f23e8d8d700cfdc0`.
 
+The separate background-shortcut fix build uses clean source `bfdb057a27e79f8a005191f628a1c9e50fca9f3b` and executable SHA-256 `b5ff7a1098fdf764a0612ba5d64b02dab42a6d06cfcb71fb4902a42f84668e88`. It was launched for a physical retest after native portal registration/CreateSession succeeded with the installed development entry. The earlier passing listening/input rows identify the original build; they are not automatically transferred to this new build.
+
 Headset/microphone models, drivers, Windows version, PTT input used for the earlier speech checks, test duration, detailed speech quality and latency were not reported. F8 was specified for the foreground focus-loss check. Other foreground input behavior, background keyboard/HOTAS, remaining radio isolation cases, mono fallback, multiple speakers, receive volume, precise routing-transition behavior, device removal, interruption/automatic recovery and soak checks remain pending. No voice recording was collected by the agent; credentials, network addresses and device identifiers are excluded from this record.
 
 ## Repeatable software checks
