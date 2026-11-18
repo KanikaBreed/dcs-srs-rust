@@ -176,10 +176,8 @@ fn exercise(
             started = true;
             current.state = State::Running;
         }
-        if let Some(output) = &output
-            && output.signal().is_stopped()
-        {
-            return Err(Error::Stopped);
+        if let Some(output) = &output {
+            output.signal().check_health(Instant::now())?;
         }
         current.elapsed = now.duration_since(began).as_secs() as u32;
         if let (Some(input), Some(permit)) = (&mut input, &permit) {

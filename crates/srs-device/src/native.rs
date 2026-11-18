@@ -159,6 +159,7 @@ impl Input {
         if self.signal.is_stopped() {
             return Err(Error::Stopped);
         }
+        self.signal.monitor_callbacks(Instant::now())?;
         self.stream.play().map_err(|error| {
             self.signal.stop();
             error.into()
@@ -227,6 +228,7 @@ impl Output {
         if self.signal.is_stopped() {
             return Err(Error::Stopped);
         }
+        self.signal.monitor_callbacks(Instant::now())?;
         self.stream.play().map_err(|error| {
             self.signal.stop();
             error.into()

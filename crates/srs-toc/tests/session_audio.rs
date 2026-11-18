@@ -786,3 +786,57 @@ async fn device_failure_discards_buffered_audio_and_reconnect_requires_fresh_ptt
         }
     }
 }
+
+#[tokio::test]
+async fn silent_native_callback_stalls_end_receive_only_sessions() {
+    for input in [true, false] {
+        let mut h = Harness::new(false).await;
+        let signal = if input {
+            &h.input_signal
+        } else {
+            &h.output_signal
+        };
+        signal.monitor_callbacks(Instant::now().into_std()).unwrap();
+        // The runtime keeps running, no native error is delivered, and PTT
+        // remains released. Lack of callbacks alone must end this session.
+        let result = timeout(Duration::from_secs(3), &mut h.task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            result,
+            Err(Error::Device(srs_device::Error::Stopped))
+        ));
+        assert_eq!(h.status.borrow().phase, Phase::Stopped);
+        assert!(h.input_signal.is_stopped() && h.output_signal.is_stopped());
+    }
+}
+
+#[tokio::test]
+async fn stalled_output_stops_transmission_despite_healthy_capture_and_held_input() {
+    let mut h = Harness::new(false).await;
+    h.output_signal
+        .monitor_callbacks(Instant::now().into_std())
+        .unwrap();
+    h.press().await;
+    timeout(Duration::from_secs(3), async {
+        while !h.task.is_finished() {
+            h.feed(1).await;
+            let _ = h.owner.as_mut().unwrap().renew();
+        }
+    })
+    .await
+    .unwrap();
+    let result = (&mut h.task).await.unwrap();
+    assert!(matches!(
+        result,
+        Err(Error::Device(srs_device::Error::Stopped))
+    ));
+    assert_eq!(h.status.borrow().phase, Phase::Stopped);
+    assert!(h.input_signal.is_stopped() && h.output_signal.is_stopped());
+    assert!(h.status.borrow().sent_frames > 0);
+    let mut bytes = [0; 8192];
+    while h.udp.try_recv_from(&mut bytes).is_ok() {}
+    h.feed(4).await;
+    assert!(h.udp.try_recv_from(&mut bytes).is_err());
+}

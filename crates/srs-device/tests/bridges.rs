@@ -458,3 +458,61 @@ fn playback_stats_distinguish_explicit_invalidation_from_stale_loss() {
     assert_eq!(signal.statistics().dropped, 2);
     assert_eq!(signal.statistics().invalidated, 1);
 }
+
+#[test]
+fn native_watchdog_detects_idle_input_and_output_stalls_without_error_callbacks() {
+    let start = Instant::now();
+    let (mut input, _reader, input_signal) = capture_bridge(1, start).unwrap();
+    let (mut writer, mut output, output_signal) = playback_bridge(1).unwrap();
+    let start = Instant::now();
+    for signal in [&input_signal, &output_signal] {
+        signal.monitor_callbacks(start).unwrap();
+    }
+    // Healthy silence counts as progress even without PTT or queued speech.
+    let allocation = allocation_counter::measure(|| {
+        for ms in [0, 100, 200] {
+            input.process(&[0f32; 480], time(start, ms));
+            output.process(&mut [0f32; 480], time(start, ms));
+            input_signal.check_health(time(start, ms)).unwrap();
+            output_signal.check_health(time(start, ms)).unwrap();
+        }
+    });
+    assert_eq!((allocation.count_total, allocation.count_current), (0, 0));
+    input.process::<f32>(&[], time(start, 400));
+    output.process::<f32>(&mut [], time(start, 400));
+    for signal in [&input_signal, &output_signal] {
+        signal.check_health(time(start, 449)).unwrap();
+        // Calling start again must not extend an already running watchdog.
+        signal.monitor_callbacks(time(start, 449)).unwrap();
+        assert_eq!(signal.check_health(time(start, 450)), Err(Error::Stopped));
+        assert_eq!(
+            signal.monitor_callbacks(time(start, 451)),
+            Err(Error::Stopped)
+        );
+    }
+    let mut pcm = [1f32; 480];
+    output.process(&mut pcm, time(start, 451));
+    assert!(pcm.iter().all(|s| *s == 0.0));
+    assert_eq!(
+        writer.enqueue(&[100; OUTPUT_SAMPLES], time(start, 451)),
+        Err(Error::Stopped)
+    );
+}
+
+#[test]
+fn native_watchdog_bounds_startup_and_late_callback_cannot_revive_output() {
+    let (mut writer, mut output, signal) = playback_bridge(1).unwrap();
+    let now = Instant::now();
+    // A paused stream does not time out before its explicit start.
+    signal.check_health(time(now, 1000)).unwrap();
+    signal.monitor_callbacks(time(now, 1000)).unwrap();
+    signal.check_health(time(now, 1249)).unwrap();
+    writer
+        .enqueue(&[100; OUTPUT_SAMPLES], time(now, 1249))
+        .unwrap();
+    let mut pcm = [1f32; 480];
+    // No worker poll intervenes: the late callback itself must fail closed.
+    output.process(&mut pcm, time(now, 1250));
+    assert!(signal.is_stopped());
+    assert!(pcm.iter().all(|s| *s == 0.0));
+}
