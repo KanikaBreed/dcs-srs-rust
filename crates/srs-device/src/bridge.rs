@@ -17,13 +17,15 @@ pub const BLOCK_SAMPLES: usize = 480;
 pub const CAPTURE_BLOCKS: usize = 8;
 pub const PLAYBACK_FRAMES: usize = 3;
 pub const MAX_CALLBACK_FRAMES: usize = 4800;
+pub const CALLBACK_STALL: Duration = Duration::from_millis(250);
 pub const CAPTURE_STALL: Duration = Duration::from_millis(250);
 pub const CAPTURE_LEASE: Duration = Duration::from_millis(250);
 pub const CAPTURE_MAX_AGE: Duration = Duration::from_millis(80);
 pub const PLAYBACK_MAX_AGE: Duration = Duration::from_millis(80);
 
-#[derive(Default)]
 struct Shared {
+    origin: Instant,
+    monitoring_since: AtomicU64,
     stopped: AtomicBool,
     generation: AtomicU64,
     lease_ms: AtomicU64,
@@ -31,6 +33,46 @@ struct Shared {
     dropped: AtomicU64,
     invalidated: AtomicU64,
     underruns: AtomicU64,
+}
+impl Shared {
+    fn new(origin: Instant) -> Self {
+        Self {
+            origin,
+            monitoring_since: AtomicU64::new(0),
+            stopped: AtomicBool::new(false),
+            generation: AtomicU64::new(0),
+            lease_ms: AtomicU64::new(0),
+            last_callback_ms: AtomicU64::new(0),
+            dropped: AtomicU64::new(0),
+            invalidated: AtomicU64::new(0),
+            underruns: AtomicU64::new(0),
+        }
+    }
+    fn check_health(&self, now: Instant) -> Result<(), Error> {
+        if self.stopped.load(Ordering::Acquire) {
+            return Err(Error::Stopped);
+        }
+        let since = self.monitoring_since.load(Ordering::Acquire);
+        if since != 0 {
+            let now_ms = millis(self.origin, now).inspect_err(|_| {
+                self.stopped.store(true, Ordering::Release);
+            })?;
+            let last = self.last_callback_ms.load(Ordering::Acquire).max(since - 1);
+            if now_ms.saturating_sub(last) >= CALLBACK_STALL.as_millis() as u64 {
+                self.stopped.store(true, Ordering::Release);
+                return Err(Error::Stopped);
+            }
+        }
+        Ok(())
+    }
+    fn callback(&self, now: Instant) -> Result<(), Error> {
+        self.check_health(now)?;
+        let now_ms = millis(self.origin, now).inspect_err(|_| {
+            self.stopped.store(true, Ordering::Release);
+        })?;
+        self.last_callback_ms.store(now_ms, Ordering::Release);
+        Ok(())
+    }
 }
 /// Terminal signal, usable by native error callbacks or a platform interruption.
 /// Recovery always constructs new streams/bridges; it never resumes capture.
@@ -42,6 +84,23 @@ impl StopSignal {
     }
     pub fn is_stopped(&self) -> bool {
         self.0.stopped.load(Ordering::Acquire)
+    }
+    /// Enable once, immediately before starting a native stream. Synthetic
+    /// bridges stay unmonitored unless their owner explicitly enables this.
+    pub fn monitor_callbacks(&self, now: Instant) -> Result<(), Error> {
+        self.0.check_health(now)?;
+        let since = millis(self.0.origin, now)?
+            .checked_add(1)
+            .ok_or(Error::GenerationExhausted)?;
+        let _ =
+            self.0
+                .monitoring_since
+                .compare_exchange(0, since, Ordering::AcqRel, Ordering::Acquire);
+        Ok(())
+    }
+    /// Worker-side health poll, independent of PTT or received speech.
+    pub fn check_health(&self, now: Instant) -> Result<(), Error> {
+        self.0.check_health(now)
     }
     pub fn statistics(&self) -> Statistics {
         Statistics {
@@ -144,7 +203,7 @@ pub fn capture_bridge(
         return Err(Error::UnsupportedConfig);
     }
     let (producer, consumer) = RingBuffer::new(CAPTURE_BLOCKS);
-    let shared = Arc::new(Shared::default());
+    let shared = Arc::new(Shared::new(now));
     Ok((
         CaptureCallback {
             producer,
@@ -193,13 +252,13 @@ impl CaptureCallback {
         if input.is_empty() {
             return;
         }
+        if self.shared.callback(now).is_err() {
+            self.used = 0;
+            return;
+        }
         let Ok(now_ms) = millis(self.origin, now) else {
-            self.shared.stopped.store(true, Ordering::Release);
             return;
         };
-        self.shared
-            .last_callback_ms
-            .store(now_ms, Ordering::Release);
         let generation = self.shared.generation.load(Ordering::Acquire);
         let lease = self.shared.lease_ms.load(Ordering::Acquire);
         if lease == 0 || now_ms >= lease {
@@ -288,9 +347,9 @@ impl CaptureReader {
         self.clear_queue();
     }
     fn check(&mut self, permit: &CapturePermit, now: Instant) -> Result<(), Error> {
-        if self.shared.stopped.load(Ordering::Acquire) {
+        if let Err(error) = self.shared.check_health(now) {
             self.release();
-            return Err(Error::Stopped);
+            return Err(error);
         }
         if !self.armed
             || permit.generation != self.generation
@@ -414,7 +473,7 @@ pub fn playback_bridge(
         return Err(Error::UnsupportedConfig);
     }
     let (producer, consumer) = RingBuffer::new(PLAYBACK_FRAMES);
-    let shared = Arc::new(Shared::default());
+    let shared = Arc::new(Shared::new(Instant::now()));
     Ok((
         PlaybackWriter {
             channels,
@@ -453,9 +512,7 @@ impl PlaybackWriter {
         right: &[i16; OUTPUT_SAMPLES],
         now: Instant,
     ) -> Result<(), Error> {
-        if self.shared.stopped.load(Ordering::Acquire) {
-            return Err(Error::Stopped);
-        }
+        self.shared.check_health(now)?;
         let frame = PlaybackFrame {
             samples: [*left, *right],
             at: now,
@@ -485,6 +542,15 @@ impl PlaybackCallback {
             || output.len() / self.channels > MAX_CALLBACK_FRAMES
         {
             self.shared.stopped.store(true, Ordering::Release);
+            self.current = None;
+            return;
+        }
+        if output.is_empty() {
+            return;
+        }
+        if self.shared.monitoring_since.load(Ordering::Acquire) != 0
+            && self.shared.callback(now).is_err()
+        {
             self.current = None;
             return;
         }

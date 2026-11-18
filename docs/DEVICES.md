@@ -42,6 +42,7 @@ The adapter follows the existing SRS 16 kHz/640-sample encoder and 48 kHz/1920-s
 | Output overflow | Returns `QueueFull` and changes generation so the callback discards its backlog |
 | Output stale/flush | Drops frames aged 80 ms or more and invalidates partially played frames on the next callback |
 | Callback size | At most 4800 frames/100 ms, with complete mono/stereo sample groups; invalid sizes stop capture/output and output remains silent |
+| Native callback watchdog | Starts with explicit stream start; no nonempty callback for 250 ms stops input/output even while receiving. Worker health polls and late callbacks enforce the deadline; a new stream is required after failure. |
 | Native error/route change | Sets a terminal stop flag; callbacks discard capture/silence playback, and worker operations return errors |
 | Owner drop | Stops the associated bridge and drops the native stream; reopening is always explicit |
 
@@ -78,3 +79,5 @@ References: [CPAL 0.18.2](https://docs.rs/cpal/0.18.2/cpal/), [CPAL stream const
 Stereo bridge check (local debug build, simulated 400 seconds, no devices): 10,000 codec frames / 40,000 capture blocks, zero queue drops, three expected startup underrun callbacks, maximum capture frame age 30 ms. Measured 6.569 s wall, 6.536 s user CPU, 0.001 s system CPU and 14,952 KiB peak process RSS with `bridge_probe`. This is a single-voice synthetic throughput sample, not real-time hardware latency or a mobile power measurement.
 
 The graphical client now exposes finite offline level/codec-loopback/stereo diagnostics; ownership, cancellation, deadline and evidence limits are in [VOICE_VALIDATION.md](VOICE_VALIDATION.md). Native null checks establish callback/teardown behavior only. The user reported basic two-way speech between the Linux Rust client and stock Windows SRS on 2026-11-17; device/driver details, detailed listening quality, offline diagnostics and removal checks remain pending.
+
+Native stream watchdogs track callback progress, including silent buffers, without allocation or locking. Empty callbacks do not renew health, and repeated start calls cannot extend the deadline. The integrated session polls both streams even with PTT released and no received speech; diagnostics check output health between frames. A paused stream has no startup deadline until explicitly started. Synthetic bridges opt in to this watchdog when testing native failure behavior. This detects stalled callbacks, not a physical route change hidden behind a still-running virtual/default device. Physical removal and startup timing on real Windows/Linux hardware remain pending.

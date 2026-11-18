@@ -160,9 +160,8 @@ impl Worker<'_> {
             if inputs.has_changed().is_err() {
                 return Ok(self.stats);
             }
-            if capture_signal.is_stopped() || playback_signal.is_stopped() {
-                return Err(srs_device::Error::Stopped.into());
-            }
+            capture_signal.check_health(Instant::now().into_std())?;
+            playback_signal.check_health(Instant::now().into_std())?;
             let latest = *monitor.borrow_and_update();
             if latest != levels {
                 levels = latest;
@@ -341,9 +340,8 @@ async fn send_current(
     let mut health = interval(WORKER_TICK);
     health.set_missed_tick_behavior(MissedTickBehavior::Skip);
     loop {
-        if signals.0.is_stopped() || signals.1.is_stopped() {
-            return Err(srs_device::Error::Stopped.into());
-        }
+        signals.0.check_health(Instant::now().into_std())?;
+        signals.1.check_health(Instant::now().into_std())?;
         if inputs.has_changed().is_err() {
             return Ok(false);
         }
