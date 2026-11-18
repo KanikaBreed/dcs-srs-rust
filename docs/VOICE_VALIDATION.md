@@ -29,7 +29,8 @@ Use an authorized private server and two separate headset endpoints, one running
 | Linux radio 1 mute/unmute with stock Windows speech | Muting stops audible speech while RX still shows reception; unmuting restores speech | User reported the requested check working on 2026-11-17, with Windows transmitting on 251.000 MHz AM. |
 | Linux radio 1 Left/Right/Both with stock Windows speech | Left plays only in the left ear, Right only in the right ear, and Both in both ears | User reported the requested stereo-headphone check working on 2026-11-17. Output model/driver and exact transition timing were not recorded. |
 | Mono fallback; multiple speakers and receive volume; routing transitions | Correct levels and mixing; no stale partial frame after routing change | Pending |
-| Focused key/Space/pointer and enabled background keyboard/HOTAS | Fresh release/press required; no stuck TX or unwanted source takeover | Pending |
+| Linux foreground F8 calibration and focus loss | With background PTT disabled, tap/release arms F8; holding transmits; clicking another application stops TX; returning while held does not resume TX; a fresh release/press transmits again | User replied “Good” to the requested check on 2026-11-17; recorded as a human-reported pass. |
+| Other foreground keys, Space/pointer details and background keyboard/HOTAS | Fresh release/press required; no stuck TX or unwanted source takeover | Pending |
 | Unplug input/output or change OS route while speaking | Audio stops, TX releases; no automatic fallback or resumed hold | Pending |
 | Lock, sleep/resume, network removal and reconnect | No stale audio/TX; explicit reconnect after worker/device interruption | Pending |
 | Multi-hour optimized session | Record CPU, peak/stable memory, latency, drops, battery if applicable | Pending |
@@ -44,7 +45,7 @@ The Windows-to-Linux frequency isolation check was also reported working. With o
 
 The prepared test used Blue External AWACS Mode, radio 1 at 251.000 MHz AM, with encryption off. The running Linux development build came from clean source `be92335989ea7143fe968dd56ac50887e7cedecb`, whose tree matches merged main `bcf2c8f1525d8ad599c7b375f84edd10f50950cd`. Its executable SHA-256 is `ce1d1756186e2632fe47aa3939a5864903a100d946def774f23e8d8d700cfdc0`.
 
-Headset/microphone models, drivers, Windows version, chosen PTT input, test duration, detailed speech quality and latency were not reported. Input-specific PTT calibration/focus/background behavior, remaining radio isolation cases, mono fallback, multiple speakers, receive volume, precise routing-transition behavior, device removal, interruption/automatic recovery and soak checks remain pending. No voice recording was collected by the agent; credentials, network addresses and device identifiers are excluded from this record.
+Headset/microphone models, drivers, Windows version, PTT input used for the earlier speech checks, test duration, detailed speech quality and latency were not reported. F8 was specified for the foreground focus-loss check. Other foreground input behavior, background keyboard/HOTAS, remaining radio isolation cases, mono fallback, multiple speakers, receive volume, precise routing-transition behavior, device removal, interruption/automatic recovery and soak checks remain pending. No voice recording was collected by the agent; credentials, network addresses and device identifiers are excluded from this record.
 
 ## Repeatable software checks
 
