@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=DCS SRS Rust (Development)
+Comment=Standalone radio voice and push to talk
+Exec=srs-desktop
+Icon=audio-headset
+Terminal=false
+Categories=Network;
+StartupWMClass=io.github.KanikaBreed.DcsSrsRust
+X-DCS-SRS-Rust-Development=true

@@ -11,6 +11,9 @@ mod x11;
 use std::time::{Duration, Instant, SystemTime};
 pub use worker::Worker;
 
+/// Shared desktop/portal identity; matches the development launcher's filename.
+pub const APPLICATION_ID: &str = "io.github.KanikaBreed.DcsSrsRust";
+
 pub const POLL: Duration = Duration::from_millis(20);
 pub const FRESHNESS: Duration = Duration::from_millis(150);
 pub const PORTAL_HOLD_LIMIT: Duration = Duration::from_secs(120);

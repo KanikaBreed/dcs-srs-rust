@@ -25,6 +25,18 @@ def digest(path):
         return hashlib.file_digest(source, "sha256").hexdigest()
 
 
+def desktop_exec(path):
+    """Quote one absolute Exec argument through desktop-entry and argv parsing."""
+    value = str(path.resolve())
+    if any(ord(char) < 32 or ord(char) == 127 for char in value):
+        raise ValueError("Desktop launcher paths cannot contain control characters")
+    value = value.replace("%", "%%")
+    slash = chr(92)
+    for char in (slash, '"', '`', '$'):
+        value = value.replace(char, slash + char)
+    return '"' + value.replace(slash, slash * 2) + '"'
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--release", action="store_true", help="Use the optimized Cargo release profile")
@@ -61,10 +73,22 @@ def main():
         shutil.copy2(ROOT / source, output / Path(source).name)
     shutil.copytree(ROOT / "docs", output / "docs")
     shutil.copytree(ROOT / "licenses", output / "licenses")
+    launcher_note = ""
+    if sys.platform == "linux":
+        template = ROOT / "crates/srs-desktop/linux/io.github.KanikaBreed.DcsSrsRust.desktop"
+        # GIO checks the executable before expanding %% field escapes. A fixed
+        # env executable also handles a literal percent sign in the build path.
+        launcher = template.read_text(encoding="utf-8").replace(
+            "Exec=srs-desktop", "Exec=/usr/bin/env -- " + desktop_exec(output / executable.name))
+        (output / template.name).write_text(launcher, encoding="utf-8")
+        launcher_note = (
+            f"For Wayland background PTT, copy {template.name} to your XDG data applications directory.\n"
+            "The launcher points to this build's absolute path; regenerate it if the build is moved.\n"
+            "See docs/BACKGROUND_PTT.md. No launcher was installed automatically.\n")
     (output / "README.txt").write_text(
         f"Local validation build. Launch {executable.name} from this directory.\n"
         "See docs/DESKTOP_VALIDATION.md and manifest.json before hardware testing.\n"
-        "This is not a signed installer or a complete redistribution package.\n", encoding="utf-8")
+        "This is not a signed installer or a complete redistribution package.\n" + launcher_note, encoding="utf-8")
     files = {p.relative_to(output).as_posix(): digest(p) for p in sorted(output.rglob("*")) if p.is_file()}
     manifest = {
         "format": 1,

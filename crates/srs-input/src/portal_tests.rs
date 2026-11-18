@@ -1,8 +1,9 @@
 use super::*;
 use serde::Serialize;
+use std::collections::HashSet;
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicU32, Ordering},
+    atomic::{AtomicBool, AtomicU32, Ordering},
 };
 use zbus::{
     Connection,
@@ -20,8 +21,40 @@ struct Shared {
     sender: Mutex<String>,
     result: AtomicU32,
     bindings: AtomicU32,
+    registered: Mutex<HashSet<String>>,
+    require_identity: AtomicBool,
+    reject_registration: AtomicBool,
+    sessions: AtomicU32,
 }
 struct Mock(Arc<Shared>);
+struct MockRegistry(Arc<Shared>);
+#[zbus::interface(name = "org.freedesktop.host.portal.Registry")]
+impl MockRegistry {
+    #[zbus(property)]
+    fn version(&self) -> u32 {
+        1
+    }
+    async fn register(
+        &self,
+        app_id: String,
+        _options: HashMap<String, OwnedValue>,
+        #[zbus(header)] header: Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        assert_eq!(app_id, crate::APPLICATION_ID);
+        if self.0.reject_registration.load(Ordering::SeqCst) {
+            return Err(zbus::fdo::Error::AccessDenied("Registration denied".into()));
+        }
+        assert!(
+            self.0
+                .registered
+                .lock()
+                .unwrap()
+                .insert(header.sender().unwrap().as_str().into()),
+            "registered the same connection twice"
+        );
+        Ok(())
+    }
+}
 #[derive(Serialize, Type)]
 #[zvariant(signature = "dict")]
 struct Created {
@@ -71,6 +104,19 @@ impl Mock {
         #[zbus(header)] header: Header<'_>,
         #[zbus(connection)] connection: &Connection,
     ) -> zbus::fdo::Result<OwnedObjectPath> {
+        if self.0.require_identity.load(Ordering::SeqCst)
+            && !self
+                .0
+                .registered
+                .lock()
+                .unwrap()
+                .contains(header.sender().unwrap().as_str())
+        {
+            return Err(zbus::fdo::Error::AccessDenied(
+                "An app id is required".into(),
+            ));
+        }
+        self.0.sessions.fetch_add(1, Ordering::SeqCst);
         let request = path(&header, &options, "request", "handle_token");
         let session = path(&header, &options, "session", "session_handle_token");
         *self.0.path.lock().unwrap() = session.clone();
@@ -189,11 +235,14 @@ async fn private_portal_order_denial_cancellation_and_disconnect() {
             .contains("/tmp/dbus-")
     );
     let shared = Arc::new(Shared::default());
+    shared.require_identity.store(true, Ordering::SeqCst);
     let service = zbus::connection::Builder::session()
         .unwrap()
         .name(PORTAL)
         .unwrap()
         .serve_at(OBJECT, Mock(shared.clone()))
+        .unwrap()
+        .serve_at(OBJECT, MockRegistry(shared.clone()))
         .unwrap()
         .build()
         .await
@@ -233,6 +282,14 @@ async fn private_portal_order_denial_cancellation_and_disconnect() {
         .unwrap();
     state(&mut worker, revision, State::Disconnected, Level::Unknown).await;
 
+    // A registration denial must not fall through to CreateSession/BindShortcuts.
+    let sessions = shared.sessions.load(Ordering::SeqCst);
+    shared.reject_registration.store(true, Ordering::SeqCst);
+    let revision = worker.configure(binding.clone()).unwrap();
+    state(&mut worker, revision, State::Unavailable, Level::Unknown).await;
+    assert_eq!(shared.sessions.load(Ordering::SeqCst), sessions);
+    shared.reject_registration.store(false, Ordering::SeqCst);
+
     shared.result.store(1, Ordering::SeqCst);
     let revision = worker.configure(binding.clone()).unwrap();
     state(&mut worker, revision, State::Denied, Level::Unknown).await;
@@ -262,8 +319,28 @@ async fn private_portal_order_denial_cancellation_and_disconnect() {
     .await
     .expect("canceled portal setup retained its private connection");
     shared.result.store(0, Ordering::SeqCst);
+    // Old portals lack Registry; only that missing interface permits fallback.
+    service
+        .object_server()
+        .remove::<MockRegistry, _>(OBJECT)
+        .await
+        .unwrap();
+    shared.require_identity.store(false, Ordering::SeqCst);
+    let registered = shared.registered.lock().unwrap().len();
+    let revision = worker.configure(binding.clone()).unwrap();
+    state(&mut worker, revision, State::Ready, Level::Unknown).await;
+    assert_eq!(shared.registered.lock().unwrap().len(), registered);
+    let revision = worker.configure(crate::Mode::Off).unwrap();
+    state(&mut worker, revision, State::Off, Level::Unknown).await;
+    service
+        .object_server()
+        .at(OBJECT, MockRegistry(shared.clone()))
+        .await
+        .unwrap();
+    shared.require_identity.store(true, Ordering::SeqCst);
     let revision = worker.configure(binding).unwrap();
     state(&mut worker, revision, State::Ready, Level::Unknown).await;
+    assert_eq!(shared.registered.lock().unwrap().len(), registered + 1);
     let path = shared.path.lock().unwrap().clone();
     signal(&service, &path, "ptt", "Deactivated").await;
     state(&mut worker, revision, State::Ready, Level::Released).await;

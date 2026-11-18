@@ -1,6 +1,6 @@
 # Desktop validation handoff
 
-This checklist is for the Windows/Linux standalone TOC preview. Physical tests below are **pending**, even when CI passes. Do not use a shared server or microphone until its operator/user has agreed to that test. Use headphones. This build is not an installer or release.
+This checklist is for the Windows/Linux standalone TOC preview. Basic two-way speech, PTT release at both endpoints and manual Linux disconnect/reconnect were reported working between the Linux Rust client and stock SRS on Windows on 2026-11-17; the build identity and limits are recorded in [VOICE_VALIDATION.md](VOICE_VALIDATION.md). The remaining physical checks below are **pending**, even when CI passes. Do not use a shared server or microphone until its operator/user has agreed to that test. Use headphones. This build is not an installer or release.
 
 ## Prepare an identifiable build
 
@@ -15,6 +15,8 @@ CI invokes this helper on Linux, Windows and macOS without launching or uploadin
 
 Launch `srs-desktop.exe` on Windows or `./srs-desktop` on Linux from the output directory. Keep the manifest with the results. Use a clean committed checkout for a reviewable source identity; `source_dirty: true` cannot identify uncommitted content by commit alone. Native libraries/fonts still come from the host. The copied project notices do not constitute the full dependency/source bundle needed for redistribution. Signing, installers, dependency notices and distribution-source availability remain release gates.
 
+For Linux Wayland background PTT, install the generated development desktop entry as described in [BACKGROUND_PTT.md](BACKGROUND_PTT.md). The shortcut connection registers the matching application identity before portal setup; launching a binary alone does not install its desktop entry or grant shortcut permission.
+
 ## Menu and native input checks
 
 | Check | Steps and expected result | Current evidence |
@@ -22,7 +24,7 @@ Launch `srs-desktop.exe` on Windows or `./srs-desktop` on Linux from the output 
 | Launch/navigation | Launch offline. Visit Radios, Connection, Saved setups, Controls, Server & clients, Help. Resize and test 100/150/200% scaling. Connection/PTT status and disconnect remain reachable; no audio opens on launch. | Private Xvfb render/callback checks at 1080×900 and 900×800 logical size, including 150% and all six pages at 200% scaling; native Windows/Wayland scaling pending. |
 | Devices | Refresh offline with a headset attached, remove it, refresh, reattach and refresh. Explicit device IDs remain selected, missing choices block connection and never silently fall back. Check System default follows the OS choice. | ID/restoration and null-device refresh tests; physical hotplug pending. |
 | Server setup | Use an authorized EAM server. Connect by hostname, IPv4 and bracketed IPv6 where supported. Try a wrong password. Password clears on connect and is absent from saved settings. | Loopback parser/DNS and stock hostname sign-in tests; real DNS/network/IPv6 server pending. |
-| Keyboard/PTT | Choose F1, F8, F12 and Mouse only. Save/relaunch. Calibrate with tap/release, then hold. Check modifiers, repeats, focus changes, menu changes, rebinding, pointer leaving/canceling and five-second limit. No held TX resumes after interruption. | Synthetic input/controller and GUI release/persistence checks; actual keys/mouse/OS shortcuts pending. |
+| Keyboard/PTT | Choose F1, F8, F12 and Mouse only. Save/relaunch. Calibrate with tap/release, then hold. Check modifiers, repeats, focus changes, menu changes, rebinding, pointer leaving/canceling and five-second limit. No held TX resumes after interruption. | Synthetic input/controller and GUI release/persistence checks. User reported Linux foreground F8 calibration, focus-loss TX stop, no held resume on refocus and a fresh press working on 2026-11-17. The fixed Linux/KDE Wayland global shortcut was also reported working after approval/calibration, with the requested seven-second background hold and release; build identity in VOICE_VALIDATION.md. Other keys, mouse details, modifiers, persistence, timing, lock behavior and other desktop shortcuts remain pending. |
 | Preset transfer | Save two presets. Export to a new file. Import into a separate test configuration; inspect all ten radios, selected slot, volume, mute and headphone routing. Try cancel, conflict, invalid JSON and an existing export destination. Active radios change only after Load. Close the chooser before the main window. | Bounded file, migration, conflict and no-overwrite tests; native portal/Windows/macOS chooser interaction pending. |
 | Server/help | Compare shown version/coalition/allowed policies and visible clients with stock SRS. Check unknown values and post-disconnect “last session” state. Read help without clipping or inaccessible controls. | Scripted sanitized 257-client/256-display test and live stock policy view; screen readers/long translations pending. |
 
