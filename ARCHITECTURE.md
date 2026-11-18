@@ -86,3 +86,5 @@ Keep this inventory synchronized when actual modules are added.
 Desktop background input, diagnostics, suspension policy and native test boundaries are described in [BACKGROUND_PTT.md](docs/BACKGROUND_PTT.md) and [VOICE_VALIDATION.md](docs/VOICE_VALIDATION.md). The audio worker stops after a 250 ms wall-clock discontinuity; native error/interruption is terminal and does not trigger network retry.
 
 Native input and output streams arm a 250 ms callback watchdog at explicit start. Session health polls detect silent callback loss even in receive-only idle state; callback-side checks prevent late output from reviving a stopped stream. Healthy silent buffers renew progress; empty notifications do not. This supplements native error callbacks and does not identify hidden OS route migration.
+
+The desktop uses stock-style General/Controls/Favourites/Settings/Help navigation with direct radio and server/client pages. Page changes use the existing PTT invalidation path; UI reorganization adds no audio or network behavior. Stock-client feature gaps and priorities are listed in docs/DESKTOP_PARITY.md.

@@ -5,11 +5,11 @@ export struct PeerRow { name: string, coalition: int }
 export struct PolicyRow { index: int, state: int }
 export struct RadioRow { routing: int, volume: int, muted: bool, rx: bool, name: string, frequency: string, guard: string, key: string, mode: string, enabled: bool }
 global Theme {
-    out property<color> background: #101b26;
-    out property<color> panel: #192938;
+    out property<color> background: #171b20;
+    out property<color> panel: #222830;
     out property<color> text: #edf3f7;
     out property<color> muted: #b5c6d4;
-    out property<color> accent: #76dccb;
+    out property<color> accent: #80c5ee;
     out property<color> tx: #ffbd75;
     out property<color> error: #ffb6b0;
 }
@@ -115,14 +115,22 @@ export component MainWindow inherits Window {
     callback profile-action(int);
     callback profile-selected(int);
     VerticalLayout {
-        padding: 24px; spacing: 15px;
+        padding: 18px; spacing: 12px;
         HorizontalLayout {
-            Text { text: Strings.title; color: Theme.text; font-size: 28px; font-weight: 700; }
+            Text { text: Strings.title; color: Theme.text; font-size: 24px; font-weight: 700; }
             Label { text: root.demonstration ? Strings.preview : Strings.subtitle; horizontal-alignment: right; vertical-alignment: center; }
         }
         HorizontalLayout { spacing: 8px;
-            for label[index] in [Strings.nav-radios, Strings.nav-connection, Strings.nav-presets, Strings.nav-controls, Strings.nav-server, Strings.nav-help]: Button {
-                text: label; primary: root.page == index; clicked => { root.navigate(index); }
+            for item in [
+                {label: Strings.nav-connection, page: 1},
+                {label: Strings.nav-controls, page: 3},
+                {label: Strings.nav-presets, page: 2},
+                {label: Strings.nav-settings, page: 6},
+                {label: Strings.nav-radios, page: 0},
+                {label: Strings.nav-server, page: 4},
+                {label: Strings.nav-help, page: 5},
+            ]: Button {
+                text: item.label; primary: root.page == item.page; clicked => { root.navigate(item.page); }
             }
         }
         Rectangle {
@@ -140,44 +148,47 @@ export component MainWindow inherits Window {
             }
         }
         if root.page == 1: Rectangle {
-            vertical-stretch: 1; background: Theme.panel; border-radius: 10px;
-            ScrollView { VerticalLayout {
-                padding: 16px; spacing: 10px;
-                HorizontalLayout {
-                    spacing: 12px;
-                    VerticalLayout { spacing: 4px;
+            vertical-stretch: 1; background: Theme.panel; border-radius: 8px;
+            ScrollView { VerticalLayout { padding: 12px; spacing: 8px; alignment: start;
+                Text { text: Strings.setup; color: Theme.text; font-size: 19px; font-weight: 700; }
+                HorizontalLayout { spacing: 16px;
+                    Label { text: Strings.server-state + ": " + (root.ready ? Strings.connected : root.busy ? Strings.connecting : Strings.offline-short); }
+                    Label { text: Strings.audio-state + ": " + (root.diagnostic-active ? Strings.testing-short : root.ready ? Strings.audio-open : root.busy ? Strings.audio-changing : Strings.audio-closed); }
+                    Label { text: Strings.clients + ": " + (root.ready ? root.client-count : "—"); }
+                }
+                HorizontalLayout { spacing: 24px;
+                    VerticalLayout { spacing: 4px; alignment: start;
+                        Text { text: Strings.audio-devices; color: Theme.accent; font-weight: 700; }
+                        Label { text: Strings.microphone; }
+                        ComboBox { model: root.inputs; current-index <=> root.input-index; enabled: !root.busy && !root.device-busy && !root.diagnostic-active; accessible-label: Strings.microphone; }
+                        Label { text: Strings.output; }
+                        ComboBox { model: root.outputs; current-index <=> root.output-index; enabled: !root.busy && !root.device-busy && !root.diagnostic-active; accessible-label: Strings.output; }
+                        Button { text: root.device-busy ? Strings.scanning : Strings.refresh-devices; enabled: !root.busy && !root.device-busy && !root.diagnostic-active; clicked => { root.refresh-devices(); } }
+                        Button { text: Strings.audio-test; clicked => { root.navigate(6); } }
+                    }
+                    VerticalLayout { spacing: 4px; alignment: start;
+                        Text { text: Strings.standalone-mode; color: Theme.accent; font-weight: 700; }
                         Label { text: Strings.server; }
                         LineEdit { text <=> root.server; enabled: !root.busy && !root.device-busy && !root.diagnostic-active; accessible-label: Strings.server; }
-                    }
-                    VerticalLayout { spacing: 4px;
                         Label { text: Strings.callsign; }
                         LineEdit { text <=> root.callsign; enabled: !root.busy && !root.device-busy && !root.diagnostic-active; accessible-label: Strings.callsign; }
-                    }
-                    VerticalLayout { spacing: 4px;
                         Label { text: Strings.password; }
                         LineEdit { text <=> root.password; input-type: InputType.password; enabled: !root.busy && !root.device-busy && !root.diagnostic-active; accessible-label: Strings.password; }
                     }
                 }
-                HorizontalLayout {
-                    spacing: 12px;
-                    VerticalLayout { spacing: 4px;
-                        Label { text: Strings.microphone; }
-                        ComboBox { model: root.inputs; current-index <=> root.input-index; enabled: !root.busy && !root.device-busy && !root.diagnostic-active; accessible-label: Strings.microphone; }
-                    }
-                    VerticalLayout { spacing: 4px;
-                        Label { text: Strings.output; }
-                        ComboBox { model: root.outputs; current-index <=> root.output-index; enabled: !root.busy && !root.device-busy && !root.diagnostic-active; accessible-label: Strings.output; }
-                    }
-                    Button { text: root.busy ? Strings.disconnect : Strings.connect; min-width: 220px; enabled: root.busy || (!root.device-busy && !root.diagnostic-active);
-                        clicked => { if root.busy { root.disconnect-requested(); } else { root.connect-requested(); } }
-                    }
+                Label { text: Strings.address-help; wrap: word-wrap; }
+                HorizontalLayout { spacing: 10px;
+                    Button { text: root.busy ? Strings.disconnect : Strings.connect; primary: !root.busy; enabled: root.busy || (!root.device-busy && !root.diagnostic-active); clicked => { if root.busy { root.disconnect-requested(); } else { root.connect-requested(); } } }
+                    Button { text: Strings.nav-presets; clicked => { root.navigate(2); } }
+                    Button { text: Strings.open-radios; clicked => { root.navigate(0); } }
+                    Button { text: Strings.clients; clicked => { root.navigate(4); } }
                 }
-                HorizontalLayout { spacing: 12px;
-                    Label { text: Strings.address-help; wrap: word-wrap; }
-                    Button { text: root.device-busy ? Strings.scanning : Strings.refresh-devices;
-                        enabled: !root.busy && !root.device-busy && !root.diagnostic-active; clicked => { root.refresh-devices(); }
-                    }
-                }
+            } }
+        }
+        if root.page == 6: Rectangle {
+            vertical-stretch: 1; background: Theme.panel; border-radius: 8px;
+            ScrollView { VerticalLayout { padding: 18px; spacing: 12px; alignment: start;
+                Text { text: Strings.nav-settings; color: Theme.text; font-size: 19px; font-weight: 700; }
                 CheckBox { text: Strings.retry-choice; checked <=> root.retry; enabled: !root.busy; }
                 Label { text: Strings.retry-help; wrap: word-wrap; }
                 Text { text: Strings.audio-test; color: Theme.accent; font-weight: 700; }
@@ -195,7 +206,9 @@ export component MainWindow inherits Window {
                     Label { text: round(root.diagnostic-peak) + "% · " + Strings.clip-count + " " + root.diagnostic-clipped; }
                 }
                 if root.diagnostic-active && root.diagnostic-mode == 3: Label { text: root.diagnostic-mono ? Strings.test-mono : root.diagnostic-channel == 1 ? Strings.test-left : Strings.test-right; }
+                Label { text: Strings.settings-help; wrap: word-wrap; }
                 Label { text: Strings.privacy; wrap: word-wrap; }
+                Label { text: Strings.standalone-boundary; wrap: word-wrap; }
             } }
         }
         if root.page == 2: Rectangle { background: Theme.panel; border-radius: 8px;
@@ -318,7 +331,7 @@ export component MainWindow inherits Window {
             }
         }
         if root.page == 3: Rectangle { vertical-stretch: 1; background: Theme.panel; border-radius: 10px;
-            ScrollView { VerticalLayout { padding: 18px; spacing: 12px;
+            ScrollView { VerticalLayout { padding: 18px; spacing: 12px; alignment: start;
                 Text { text: Strings.nav-controls; color: Theme.accent; font-size: 22px; font-weight: 700; }
                 HorizontalLayout { spacing: 16px;
                     Label { text: Strings.ptt-binding; vertical-alignment: center; }

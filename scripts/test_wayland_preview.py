@@ -35,7 +35,7 @@ def main():
                 env[key] = str(path)
             with private_bus() as prefix:
                 subprocess.run([*prefix, sys.executable, str(Path(__file__).resolve()), "--inside", "--out", str(output)], cwd=ROOT, env=env, check=True, timeout=60)
-        print(f"PASS: private native Wayland render; six pages and new controls at 100%/150%. Images: {output}")
+        print(f"PASS: private native Wayland render; seven pages and new controls at 100%/150%. Images: {output}")
         return
     if os.environ.get("SRS_PRIVATE_WAYLAND") != "1" or "srs-wayland-" not in os.environ.get("XDG_RUNTIME_DIR", ""):
         raise SystemExit("Private runtime required")
@@ -51,8 +51,9 @@ def main():
                 time.sleep(0.05)
             for scale in ("1", "1.5"):
                 env = dict(os.environ, WAYLAND_DISPLAY=socket.name, SLINT_SCALE_FACTOR=scale)
-                cases = [(f"page-{page}", [f"--page={page}"]) for page in range(6)]
-                cases += [("global", ["--page=3", "--global-ptt"]), ("joystick", ["--page=3", "--joystick-ptt"]), ("audio", ["--page=1", "--audio-test"])]
+                cases = [(f"page-{page}", [f"--page={page}"]) for page in range(7)]
+                cases += [("global", ["--page=3", "--global-ptt"]), ("joystick", ["--page=3", "--joystick-ptt"]), ("audio", ["--page=6", "--audio-test"])]
+                cases += [("general-offline", ["--page=1", "--offline"]), ("general-tx", ["--page=1", "--tx"])]
                 for name, flags in cases:
                     subprocess.run([str(ROOT / "target/debug/examples/desktop_preview"), str(output / f"{name}-{scale}.ppm"), "--compact", *flags], cwd=ROOT, env=env, check=True, timeout=10, stdout=log, stderr=subprocess.STDOUT)
         finally:
