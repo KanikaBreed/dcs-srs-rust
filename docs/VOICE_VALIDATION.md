@@ -50,6 +50,19 @@ The separate background-shortcut fix build uses clean source `bfdb057a27e79f8a00
 
 Headset/microphone models, drivers, Windows version, PTT input used for the earlier speech checks, test duration, detailed speech quality and latency were not reported. F8 was specified for the foreground focus-loss check. Other foreground input behavior, other desktop/background-keyboard combinations, HOTAS, portal denial/cancellation/lock behavior, remaining radio isolation cases, mono fallback, multiple speakers, receive volume, precise routing-transition behavior, device removal, interruption/automatic recovery and soak checks remain pending. No voice recording was collected by the agent; credentials, network addresses and device identifiers are excluded from this record.
 
+## Headset removal and sleep checks
+
+Use the identified running build and the private server. These checks remain pending until a person reports the result; simulated stop flags do not prove that a physical backend reports unplugging.
+
+1. While receiving speech, unplug the selected physical audio device. Check that playback stops and the client reports an error/disconnect. Note whether the OS instead moves audio to another route.
+2. Reconnect manually after restoring the device, then repeat removal while holding PTT. Verify TX ends and the stock peer stops receiving. Release PTT before restoring the device.
+3. Restore the device, refresh device choices while disconnected if needed, and reconnect explicitly. Verify receive-only startup and that a fresh release/press restores speech.
+4. Separately, sleep and resume the client machine during a held transmission. Check that the session ends on resume, buffered speech is not replayed and a held input does not restart TX. Reconnect and test a fresh press. If the server is hosted on that same machine, record that its suspension also interrupted the peer; that alone does not establish client-side safety.
+
+Record input and output results separately. A wireless headset power-off is different from removing its USB receiver. A virtual/default audio route may remain present after physical removal; the current device adapter responds to native errors and capture stalls, but does not independently observe every OS-managed route migration. Report unexpected fallback or a persistent TX indication as failures, not passes.
+
+The loopback session regression covers input/output stop signals in both receive and transmit states. It verifies discarded partial playback/capture, zero post-failure voice packets, both bridges stopped, explicit new-session startup while already held, and voice only after a fresh release/press. The runtime-pause regression also injects a late capture callback immediately after resume and verifies an interruption error with zero transmitted frames. These checks use generated audio and no native device.
+
 ## Repeatable software checks
 
 ```sh

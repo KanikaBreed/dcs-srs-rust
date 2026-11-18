@@ -697,16 +697,92 @@ async fn worker_suspension_stops_audio_even_if_input_renews_on_resume() {
     // Suspend this owned runtime only. No system sleep or shared process signal.
     std::thread::sleep(Duration::from_millis(350));
     let _ = h.owner.as_mut().unwrap().renew();
-    assert!(
-        timeout(Duration::from_secs(3), &mut h.task)
-            .await
-            .unwrap()
-            .unwrap()
-            .is_err()
-    );
+    // Model an audio callback arriving immediately after resume, before the
+    // worker gets scheduled. It must not complete the pre-sleep partial frame.
+    h.input.process(&[0.5f32; 1920], Instant::now().into_std());
+    let result = timeout(Duration::from_secs(3), &mut h.task)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(result, Err(Error::Interrupted)));
     assert!(h.input_signal.is_stopped() && h.output_signal.is_stopped());
     assert_eq!(h.status.borrow().phase, Phase::Stopped);
+    assert_eq!(h.status.borrow().sent_frames, 0);
+    let mut bytes = [0; 8192];
+    assert!(h.udp.try_recv_from(&mut bytes).is_err());
     let mut pcm = [1f32; 480];
     h.output.process(&mut pcm, Instant::now().into_std());
     assert!(pcm.iter().all(|sample| *sample == 0.0));
+}
+
+#[tokio::test]
+async fn device_failure_discards_buffered_audio_and_reconnect_requires_fresh_ptt() {
+    for fail_input in [true, false] {
+        for transmitting in [false, true] {
+            let mut h = Harness::new(false).await;
+            if transmitting {
+                h.press().await;
+                h.feed(2).await; // Half a codec frame must never escape after failure.
+            } else {
+                h.remote_frame(1, b'B').await;
+                timeout(Duration::from_secs(3), async {
+                    while h.status.borrow_and_update().mixed_frames == 0 {
+                        h.status.changed().await.unwrap();
+                    }
+                })
+                .await
+                .unwrap();
+                let mut partial = [0f32; 480];
+                h.output.process(&mut partial, Instant::now().into_std());
+                assert!(partial.iter().any(|s| s.abs() > 0.01));
+            }
+            if fail_input {
+                h.input_signal.stop();
+            } else {
+                h.output_signal.stop();
+            }
+            // Late native callbacks and a still-held input cannot complete TX.
+            h.input.process(&[0.5f32; 1920], Instant::now().into_std());
+            if transmitting {
+                let _ = h.owner.as_mut().unwrap().renew();
+            }
+            let result = timeout(Duration::from_secs(3), &mut h.task)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(matches!(
+                result,
+                Err(Error::Device(srs_device::Error::Stopped))
+            ));
+            assert!(h.input_signal.is_stopped() && h.output_signal.is_stopped());
+            assert_eq!(h.status.borrow().phase, Phase::Stopped);
+            assert_eq!(h.status.borrow().sent_frames, 0);
+            let mut pcm = [1f32; 480];
+            h.output.process(&mut pcm, Instant::now().into_std());
+            assert!(
+                pcm.iter().all(|s| *s == 0.0),
+                "buffered playback survived failure"
+            );
+            let mut bytes = [0; 8192];
+            assert!(
+                h.udp.try_recv_from(&mut bytes).is_err(),
+                "capture escaped after failure"
+            );
+            drop(h);
+
+            // Explicit reconnection constructs new streams and a new session.
+            // A hold already present at registration must remain receive-only.
+            let mut reopened = Harness::new(true).await;
+            reopened.owner.as_mut().unwrap().renew().unwrap();
+            reopened.feed(4).await;
+            assert_eq!(reopened.status.borrow().phase, Phase::Receiving);
+            assert!(reopened.udp.try_recv_from(&mut bytes).is_err());
+            reopened.owner.as_mut().unwrap().release().unwrap();
+            reopened.press().await;
+            reopened.feed(4).await;
+            let packet = reopened.packet().await;
+            assert!(!VoicePacket::decode(&packet).unwrap().audio.is_empty());
+            reopened.stop().await;
+        }
+    }
 }
