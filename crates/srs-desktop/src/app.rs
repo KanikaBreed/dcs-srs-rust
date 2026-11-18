@@ -1043,6 +1043,18 @@ fn setup(profile_path: Option<std::path::PathBuf>) -> Result<Application, slint:
     let selector = slint::BackendSelector::new()
         .backend_name("winit".into())
         .renderer_name("software".into());
+    #[cfg(target_os = "linux")]
+    let selector = selector.with_winit_window_attributes_hook(|attributes| {
+        use slint::winit_030::winit::platform::{
+            wayland::WindowAttributesExtWayland, x11::WindowAttributesExtX11,
+        };
+        let attributes = WindowAttributesExtWayland::with_name(
+            attributes,
+            srs_input::APPLICATION_ID,
+            "srs-desktop",
+        );
+        WindowAttributesExtX11::with_name(attributes, srs_input::APPLICATION_ID, "srs-desktop")
+    });
     #[cfg(all(test, target_os = "linux"))]
     let selector = {
         use slint::winit_030::winit::platform::x11::EventLoopBuilderExtX11;

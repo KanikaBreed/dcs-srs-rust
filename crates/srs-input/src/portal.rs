@@ -7,6 +7,29 @@ use std::{
 };
 use zbus::zvariant::{OwnedObjectPath, OwnedValue};
 
+fn registry_missing(error: &ashpd::Error) -> bool {
+    match error {
+        ashpd::Error::PortalNotFound(interface) => {
+            interface.as_str() == "org.freedesktop.host.portal.Registry"
+        }
+        ashpd::Error::Zbus(error) | ashpd::Error::Portal(ashpd::PortalError::ZBus(error)) => {
+            match error {
+                zbus::Error::MethodError(name, _, _) => matches!(
+                    name.as_str(),
+                    "org.freedesktop.DBus.Error.UnknownInterface"
+                        | "org.freedesktop.DBus.Error.UnknownMethod"
+                ),
+                zbus::Error::FDO(error) => matches!(
+                    error.as_ref(),
+                    zbus::fdo::Error::UnknownInterface(_) | zbus::fdo::Error::UnknownMethod(_)
+                ),
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
 fn trigger(key: u8, modifiers: u8) -> String {
     let mut parts = Vec::new();
     for (bit, name) in ["SHIFT", "CTRL", "ALT", "LOGO"].iter().enumerate() {
@@ -35,6 +58,22 @@ pub(crate) async fn run(
     .await
     .map_err(|_| State::Unavailable)?
     .map_err(|_| State::Unavailable)?;
+    // Register this exact connection before any desktop portal call. Modern
+    // GlobalShortcuts rejects anonymous host apps (including cargo/service
+    // launches). Sandboxed apps retain their portal-provided identity in ashpd.
+    let app_id = crate::APPLICATION_ID.parse().map_err(|_| State::Failed)?;
+    match tokio::time::timeout(
+        Duration::from_secs(3),
+        ashpd::register_host_app_with_connection(connection.clone(), app_id),
+    )
+    .await
+    {
+        Ok(Ok(())) => (),
+        // Older portals have no Registry: let their normal identity/permission
+        // checks decide. Never fall through a registration denial or timeout.
+        Ok(Err(error)) if registry_missing(&error) => (),
+        _ => return Err(State::Unavailable),
+    }
     let proxy = GlobalShortcuts::with_connection(connection.clone())
         .await
         .map_err(|_| State::Unavailable)?;

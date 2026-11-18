@@ -15,6 +15,8 @@ CI invokes this helper on Linux, Windows and macOS without launching or uploadin
 
 Launch `srs-desktop.exe` on Windows or `./srs-desktop` on Linux from the output directory. Keep the manifest with the results. Use a clean committed checkout for a reviewable source identity; `source_dirty: true` cannot identify uncommitted content by commit alone. Native libraries/fonts still come from the host. The copied project notices do not constitute the full dependency/source bundle needed for redistribution. Signing, installers, dependency notices and distribution-source availability remain release gates.
 
+For Linux Wayland background PTT, install the generated development desktop entry as described in [BACKGROUND_PTT.md](BACKGROUND_PTT.md). The shortcut connection registers the matching application identity before portal setup; launching a binary alone does not install its desktop entry or grant shortcut permission.
+
 ## Menu and native input checks
 
 | Check | Steps and expected result | Current evidence |

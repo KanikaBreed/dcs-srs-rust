@@ -30,7 +30,8 @@ Use an authorized private server and two separate headset endpoints, one running
 | Linux radio 1 Left/Right/Both with stock Windows speech | Left plays only in the left ear, Right only in the right ear, and Both in both ears | User reported the requested stereo-headphone check working on 2026-11-17. Output model/driver and exact transition timing were not recorded. |
 | Mono fallback; multiple speakers and receive volume; routing transitions | Correct levels and mixing; no stale partial frame after routing change | Pending |
 | Linux foreground F8 calibration and focus loss | With background PTT disabled, tap/release arms F8; holding transmits; clicking another application stops TX; returning while held does not resume TX; a fresh release/press transmits again | User replied “Good” to the requested check on 2026-11-17; recorded as a human-reported pass. |
-| Other foreground keys, Space/pointer details and background keyboard/HOTAS | Fresh release/press required; no stuck TX or unwanted source takeover | Pending |
+| Linux Wayland global keyboard shortcut | Approved shortcut transmits while another app has focus, including a seven-second hold, then releases | Initial attempt failed: user enabled it but holding did not transmit. Missing portal application registration reproduced; fixed-build physical retest pending. See BACKGROUND_PTT.md. |
+| Other foreground keys, Space/pointer details and HOTAS | Fresh release/press required; no stuck TX or unwanted source takeover | Pending |
 | Unplug input/output or change OS route while speaking | Audio stops, TX releases; no automatic fallback or resumed hold | Pending |
 | Lock, sleep/resume, network removal and reconnect | No stale audio/TX; explicit reconnect after worker/device interruption | Pending |
 | Multi-hour optimized session | Record CPU, peak/stable memory, latency, drops, battery if applicable | Pending |

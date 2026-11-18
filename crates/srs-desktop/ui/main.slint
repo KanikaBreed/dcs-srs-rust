@@ -454,7 +454,7 @@ export component MainWindow inherits Window {
                 moved => { if self.mouse-x < 0px || self.mouse-y < 0px || self.mouse-x > self.width || self.mouse-y > self.height { root.pointer-input(2); } }
             }
         }
-        Label { text: root.background-enabled ? Strings.background-active : Strings.ptt-help; horizontal-alignment: center; wrap: word-wrap; }
+        Label { text: root.background-enabled ? (root.background-state == 2 ? Strings.background-active : Strings.background-status(root.background-state)) : Strings.ptt-help; horizontal-alignment: center; wrap: word-wrap; }
         Text { text: Strings.problem(root.problem); color: Theme.error; wrap: word-wrap; min-height: 38px; }
         HorizontalLayout {
             Label { text: Strings.counters(root.sent, root.received); }
