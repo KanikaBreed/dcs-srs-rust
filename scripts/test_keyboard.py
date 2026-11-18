@@ -35,7 +35,8 @@ def verify_keyboard(address):
                 while marker not in buffer:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0 or not select.select([master], [], [], remaining)[0]:
-                        raise RuntimeError("Keyboard probe did not reach " + repr(marker))
+                        raise RuntimeError("Keyboard probe did not reach " + repr(marker)
+                                           + "; recent synthetic terminal output: " + repr(bytes(buffer[-2048:])))
                     data = os.read(master, 4096)
                     if not data:
                         raise RuntimeError("Keyboard probe exited before " + repr(marker))
@@ -83,12 +84,20 @@ def verify_keyboard(address):
                     receive(b"RX READY")
                     send(b"2")
                     receive(b"RADIO 2:")
-                    send(b"f253.125\r")
-                    receive(b"RADIO 2: 253.125000 MHz AM")
-                    # Wait for accumulated input to drain after the asynchronous edit.
-                    receive(b"INPUT READY")
-                    send(release)
-                    receive(b"PTT ARMED")
+                    # Reply to each idle/drained acknowledgement immediately:
+                    # this fresh release must not be mistaken for a full input
+                    # batch's backlog. Repeated asynchronous edits exercise the
+                    # boundary using real PTY/crossterm input, without sleeps.
+                    for mhz in ("253.125", "254.125") * 4:
+                        send(b"f" + mhz.encode() + b"\r")
+                        receive(b"RADIO 2: " + mhz.encode() + b"000 MHz AM")
+                        receive(b"INPUT READY")
+                        send(release)
+                        receive(b"PTT ARMED")
+                        send(press)
+                        receive(b"TX LOCAL")
+                        send(release)
+                        receive(b"RX READY")
                     send(press)
                     receive(b"TX LOCAL")
                     send(repeat)

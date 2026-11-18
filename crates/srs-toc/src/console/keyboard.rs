@@ -157,8 +157,10 @@ pub async fn operate(
             owner.release()?;
             announce(REARM)?;
         }
+        let mut budget_exhausted = true;
         for _ in 0..64 {
             if !event::poll(Duration::ZERO)? {
+                budget_exhausted = false;
                 if draining {
                     draining = false;
                     announce("INPUT READY: tap/release F8 to rearm.")?;
@@ -321,7 +323,10 @@ pub async fn operate(
                 Action::None => (),
             }
         }
-        if event::poll(Duration::ZERO)? {
+        // Only a full batch can signal a backlog. A key may arrive after the
+        // empty-queue check (especially in response to INPUT READY); it belongs
+        // to the next tick and must not be discarded as overflow.
+        if budget_exhausted && event::poll(Duration::ZERO)? {
             invalidate(&mut ptt, &mut owner)?;
             draining = true;
         }
